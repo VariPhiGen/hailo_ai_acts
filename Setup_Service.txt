@@ -1,0 +1,498 @@
+# SVDS System Setup Guide
+
+A comprehensive step-by-step guide for setting up the Variphi SVDS (Smart Video Detection System) on Raspberry Pi 5 with Hailo AI hardware.
+
+## 📋 Quick Start
+
+```bash
+# 1. System preparation
+./setup_system.sh
+
+# 2. SVDS installation
+cd SVDS && ./install.sh
+
+# 3. Configure and run
+source setup_env.sh
+python basic_pipelines/detection.py --i rtsp://your_camera_ip:554/stream
+```
+
+---
+
+## �� Prerequisites
+
+### Hardware
+- **Raspberry Pi 5** (4GB or 8GB RAM)
+- **Hailo AI Hardware**: Hailo-8 or Hailo-8L
+- **Camera**: IP camera with RTSP stream
+- **Storage**: 32GB+ microSD card (Class 10)
+- **Network**: Stable internet connection
+
+### Software
+- **Raspberry Pi OS** (Bookworm or newer)
+- **Python 3.8+**
+- **Git**
+
+---
+
+## 🚀 Phase 1: System Preparation
+
+### Step 1: Update System
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo reboot
+```
+
+### Step 2: Install Essential Dependencies
+```bash
+sudo apt install -y \
+    python3-gi \
+    python3-gi-cairo \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    build-essential \
+    git \
+    curl \
+    wget
+```
+
+### Step 3: Install Hailo Packages
+```bash
+# Install Hailo packages
+sudo apt install -y hailo-all
+
+# Verify installation
+hailortcli --version
+```
+
+### Step 4: Enable PCIe Gen 3 (Hailo-8)
+```bash
+# Enable PCIe Gen 3 speed
+if ! grep -q "pcie_gen3=1" /boot/firmware/config.txt; then
+    echo "pcie_gen3=1" | sudo tee -a /boot/firmware/config.txt
+    echo "✅ PCIe Gen 3 enabled - reboot required"
+fi
+```
+
+### Step 5: Setup Device Permissions
+```bash
+# Add user to required groups
+sudo usermod -a -G video,dialout $USER
+
+# Create udev rules for radar devices
+sudo tee /etc/udev/rules.d/99-radar.rules > /dev/null << 'EOF'
+# Radar device rules
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d6b", ATTRS{idProduct}=="0002", MODE="0666"
+EOF
+
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+### Step 6: Reboot System
+```bash
+sudo reboot
+```
+
+---
+
+## 📦 Phase 2: SVDS Installation
+
+### Step 1: Clone Repository
+```bash
+git clone https://github.com/VariPhiGen/hailo-apps-infra.git
+cd hailo-apps-infra
+```
+
+### Step 2: Run Installation Script
+```bash
+# Make script executable
+chmod +x install.sh
+
+# Run installation
+./install.sh
+```
+
+### Step 3: Verify Installation
+```bash
+# Activate environment
+source setup_env.sh
+
+# Test HailoRT
+hailortcli --version
+
+# Test detection pipeline
+python basic_pipelines/detection_simple.py --help
+```
+
+---
+
+## ⚙️ Phase 3: Configuration
+
+### Step 1: Create Configuration Files
+```bash
+# Copy configuration template
+cp configuration.json.template configuration.json
+
+# Copy environment template
+cp .env.template .env
+```
+
+### Step 2: Configure Camera Settings
+Edit `configuration.json`:
+```json
+{
+    "camera_details": {
+        "RTSP_URL": "rtsp://username:password@camera-ip:554/stream",
+        "camera_ip": "192.168.1.100",
+        "username": "your_camera_username",
+        "password": "your_camera_password",
+        "IF_USB_CAMERA": "False",
+        "USB_CAM_INPUT": ""
+    }
+}
+```
+
+### Step 3: Configure Cloud Services (Optional)
+Edit `.env`:
+```bash
+# S3 Credentials
+AWS_ACCESS_KEY_ID=your_access_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_key_here
+AWS_DEFAULT_REGION=us-east-1
+
+# Kafka Credentials
+KAFKA_BOOTSTRAP_SERVERS=your_kafka_broker:9092
+KAFKA_USERNAME=your_kafka_username
+KAFKA_PASSWORD=your_kafka_password
+```
+
+---
+
+## 🎯 Phase 4: Running the System
+
+### Method 1: Manual Execution
+```bash
+# Navigate to SVDS directory
+cd SVDS
+
+# Activate environment (IMPORTANT: Use source, not bash)
+source setup_env.sh
+
+# Run detection pipeline
+python basic_pipelines/detection.py --i rtsp://your_camera_ip:554/stream --disable-sync
+```
+
+### Method 2: Auto-Restart Script (Simplified)
+```bash
+# Make script executable
+chmod +x run_detection.sh
+
+# Run with RTSP link
+./run_detection.sh rtsp://your_camera_ip:554/stream
+```
+
+**Features of the simplified script:**
+- ✅ **Lightweight**: No logging files or complex monitoring
+- ✅ **Auto-restart**: Progressive delays (1min → 5min → 10min)
+- ✅ **Console output**: Colored status messages
+- ✅ **Simple usage**: Just RTSP link parameter
+- ✅ **Background ready**: Can run with `nohup` or as service
+
+### Method 3: Systemd Service (Production)
+```bash
+# Create service file
+sudo tee /etc/systemd/system/svds-detection.service > /dev/null << 'EOF'
+[Unit]
+Description=SVDS Detection Pipeline Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/hailo-apps-infra/SVDS
+Environment=RTSP_LINK=rtsp://your_camera_ip:554/stream
+ExecStart=/home/pi/hailo-apps-infra/SVDS/run_detection.sh $RTSP_LINK
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start service
+sudo systemctl daemon-reload
+sudo systemctl enable svds-detection.service
+sudo systemctl start svds-detection.service
+
+# Check status
+sudo systemctl status svds-detection.service
+```
+
+---
+
+## 🔍 Environment Activation
+
+### About `setup_env.sh`
+
+**CRITICAL**: The `setup_env.sh` script **must be sourced**, not executed:
+
+```bash
+# ✅ Correct way (sourcing)
+source setup_env.sh
+# or
+. setup_env.sh
+
+# ❌ Wrong way (executing)
+./setup_env.sh
+bash setup_env.sh
+```
+
+### Why Sourcing is Required
+
+The script modifies environment variables (`PYTHONPATH`, activates virtual environment) that need to persist in the current shell session. When executed directly, it runs in a subshell and changes don't affect the parent shell.
+
+### What the Script Does
+
+1. **Checks kernel compatibility** for Raspberry Pi
+2. **Sets PYTHONPATH** to include project directories
+3. **Activates virtual environment** (`SVDS`)
+4. **Validates environment** setup
+
+### Verification
+```bash
+# Check if environment is active
+echo $VIRTUAL_ENV
+echo $PYTHONPATH
+
+# Should show:
+# /home/pi/hailo-apps-infra/SVDS
+# /home/pi/hailo-apps-infra:/usr/lib/python3/dist-packages:...
+```
+
+---
+
+## 🚨 Troubleshooting
+
+### HailoRT Driver Issues
+```bash
+# Check if driver is loaded
+lsmod | grep hailo
+
+# If not found, install manually:
+sudo apt install -y build-essential linux-headers-$(uname -r) raspberrypi-kernel-headers
+cd /tmp
+git clone --depth 1 -b v4.20.0 https://github.com/hailo-ai/hailort-drivers.git
+cd hailort-drivers/linux/pcie
+make clean && make all
+sudo make install
+sudo install -m644 51-hailo-udev.rules /etc/udev/rules.d/
+sudo depmod -a
+sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo modprobe hailo_pci
+```
+
+### Kernel Compatibility Issues
+```bash
+# Check kernel version
+uname -r
+
+# Update to compatible kernel
+sudo rpi-update
+sudo reboot
+```
+
+### Permission Issues
+```bash
+# Fix device permissions
+sudo usermod -a -G video,dialout $USER
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# Logout and login again
+```
+
+### Virtual Environment Issues
+```bash
+# Recreate virtual environment
+rm -rf SVDS
+python3 -m venv --system-site-packages SVDS
+source SVDS/bin/activate
+pip install --upgrade pip setuptools wheel
+```
+
+### Network Issues
+```bash
+# Check network connectivity
+ping 8.8.8.8
+
+# Check DNS
+nslookup github.com
+
+# If using proxy, set environment variables
+export http_proxy=http://proxy:port
+export https_proxy=http://proxy:port
+```
+
+---
+
+## 📊 Monitoring
+
+### Check Service Status
+```bash
+# Systemd service
+sudo systemctl status svds-detection.service
+
+# View logs (systemd journal)
+sudo journalctl -u svds-detection.service -f
+
+# View recent logs
+sudo journalctl -u svds-detection.service --since "1 hour ago"
+```
+
+### Performance Monitoring
+```bash
+# Check CPU usage
+htop
+
+# Check memory usage
+free -h
+
+# Check disk usage
+df -h
+
+# Check running processes
+ps aux | grep detection
+```
+
+### Manual Script Monitoring
+```bash
+# Check if script is running
+ps aux | grep run_detection.sh
+
+# View script output (if running in terminal)
+# The script provides real-time colored output
+
+# Run in background with output capture
+nohup ./run_detection.sh rtsp://your_camera_ip:554/stream > detection_output.log 2>&1 &
+
+# Monitor background script
+tail -f detection_output.log
+```
+
+---
+
+## 🔧 Advanced Configuration
+
+### Custom HEF Files
+```bash
+# Place your HEF files in resources directory
+cp your_model.hef SVDS/resources/
+
+# Update configuration.json
+{
+    "default_arguments": {
+        "hef_path": "resources/your_model.hef",
+        "labels-json": "resources/your_labels.json"
+    }
+}
+```
+
+### Multiple Camera Support
+```bash
+# Create separate service files for each camera
+sudo cp /etc/systemd/system/svds-detection.service /etc/systemd/system/svds-detection-camera1.service
+sudo cp /etc/systemd/system/svds-detection.service /etc/systemd/system/svds-detection-camera2.service
+
+# Edit each service with different RTSP links
+sudo nano /etc/systemd/system/svds-detection-camera1.service
+sudo nano /etc/systemd/system/svds-detection-camera2.service
+
+# Enable and start multiple services
+sudo systemctl enable svds-detection-camera1.service
+sudo systemctl enable svds-detection-camera2.service
+sudo systemctl start svds-detection-camera1.service
+sudo systemctl start svds-detection-camera2.service
+```
+
+### Custom Auto-Restart Delays
+```bash
+# Edit the script to modify sleep delays
+nano run_detection.sh
+
+# Change this line:
+SLEEP_DELAYS=(60 300 600)  # 1 min, 5 min, 10 min in seconds
+
+# To custom delays:
+SLEEP_DELAYS=(30 120 300 600)  # 30s, 2min, 5min, 10min
+```
+
+### Background Operation
+```bash
+# Run script in background
+nohup ./run_detection.sh rtsp://your_camera_ip:554/stream > detection.log 2>&1 &
+
+# Check background process
+jobs
+ps aux | grep run_detection
+
+# Stop background process
+pkill -f run_detection.sh
+```
+
+---
+
+## 📞 Support
+
+For issues and questions:
+- Check the [troubleshooting section](#-troubleshooting)
+- Review system logs: `sudo journalctl -u svds-detection.service`
+- Check Hailo community forum
+- Open an issue on the GitHub repository
+
+### Common Issues
+
+**Script exits immediately:**
+```bash
+# Check if SVDS directory exists
+ls -la SVDS/
+
+# Check if setup_env.sh exists
+ls -la SVDS/setup_env.sh
+
+# Check if detection.py exists
+ls -la SVDS/basic_pipelines/detection.py
+```
+
+**Environment not activated:**
+```bash
+# Make sure to use source, not bash
+source setup_env.sh
+
+# Verify environment
+echo $VIRTUAL_ENV
+which python
+```
+
+**Service fails to start:**
+```bash
+# Check service logs
+sudo journalctl -u svds-detection.service -n 50
+
+# Check file permissions
+ls -la /home/pi/hailo-apps-infra/SVDS/run_detection.sh
+
+# Make script executable
+chmod +x /home/pi/hailo-apps-infra/SVDS/run_detection.sh
+```
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

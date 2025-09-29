@@ -1,0 +1,114 @@
+# Virtual Environment Folders
+SVDS/
+venv/
+env/
+.venv/
+.env/
+*.log
+
+# Python Virtual Environment Config
+pyvenv.cfg
+*/pyvenv.cfg
+
+# Hailo Resources and Temp Files
+hailo_temp_resources/
+resources/
+configuration.json
+
+
+# IMPORTANT: Keep configuration files
+!config.yaml
+!ci.yaml
+
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Environment variables
+.env
+.venv
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Model files (usually large)
+*.hef
+*.onnx
+*.pb
+*.tflite
+
+# Media files
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.gif
+videos/
+photos/
+gifs/ 
