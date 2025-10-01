@@ -77,7 +77,7 @@ class TimeBasedUnauthorizedAccess:
                                         datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
                                         self.parent.create_result_events(xywh,obj_class,f"Security-Unauthorized Access",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
 
-        print("Yes Running Successfully", self.zone_data,self.parameters)
+        #print("Yes Running Successfully", self.zone_data,self.parameters)
 
     def cleaning(self):
         self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]
