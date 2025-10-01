@@ -11,7 +11,7 @@
 # After sourcing, your PYTHONPATH will be set for the current terminal session.
 
 # Define virtual environment name
-VENV_NAME="SVDS"
+VENV_NAME="aiacts"
 
 # Function to check if the script is being sourced
 is_sourced() {
