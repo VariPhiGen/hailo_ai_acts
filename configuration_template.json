@@ -1,52 +1,17 @@
 {
-    "sensor_id": "SENSOR_ID_PLACEHOLDER",
-    "default_arguments": {
-      "hef_path": "/home/arresto/SVDS/resources/models/hailo8l/yolov11s.hef",
-      "labels-json": "None"
-    },
-    "available_activities": [
-      "traffic_overspeeding_distancewise"
-    ],
-    "active_activities": [
-      "traffic_overspeeding_distancewise"
-    ],
-    "kafka_variables": {
-      "bootstrap_servers": [
-        "BROKER_IP:9092"
-      ],
-      "primary_broker": "BROKER_IP:9092",
-      "secondary_broker": "BROKER_IP:9092",
-      "broker_failover_timeout": 30,
-      "send_analytics_pipeline": "aianalytics",
-      "send_events_pipeline": "svds_violation",
-      "log_topic": "error_log",
-      "reset_threshold": 3000,
-      "AWS_S3": {
-        "primary": {
-          "aws_access_key_id": "AWS_ACCESS_KEY_PLACEHOLDER",
-          "aws_secret_access_key": "AWS_SECRET_KEY_PLACEHOLDER",
-          "region_name": "ap-south-1",
-          "BUCKET_NAME": "speedviolations",
-          "org_img_fn": "violationoriginalimages/",
-          "video_fn": "videoclips/",
-          "cgi_fn": "cgisnapshots/",
-          "end_point_url": "http://S3_ENDPOINT:9000"
-        },
-        "secondary": {
-          "aws_access_key_id": "AWS_ACCESS_KEY_PLACEHOLDER",
-          "aws_secret_access_key": "AWS_SECRET_KEY_PLACEHOLDER",
-          "region_name": "ap-south-1",
-          "BUCKET_NAME": "arrestovideo",
-          "org_img_fn": "violationoriginalimages/",
-          "video_fn": "videoclips/",
-          "cgi_fn": "cgisnapshots/",
-          "end_point_url": "http://S3_ENDPOINT:9000"
-        },
-        "s3_failover_timeout": 30,
-        "upload_retries": 3
-      }
-    },
-    "radar_config": {
+  "sensor_id": "SENSOR_ID_PLACEHOLDER",
+  "default_arguments": {
+    "hef_path": "/home/arresto/SVDS/resources/models/hailo8l/yolov11s.hef",
+    "labels-json": "None"
+  },
+  "available_activities": [
+    "traffic_overspeeding_distancewise",
+    "TimeBasedUnauthorizedAccess"
+  ],
+  "active_activities": [
+    "traffic_overspeeding_distancewise","TimeBasedUnauthorizedAccess"
+  ],
+  "radar_config": {
       "port": "/dev/ttyACMr",
       "baudrate": 9600,
       "max_age": 10,
@@ -60,39 +25,38 @@
       "IF_USB_CAMERA": "False",
       "USB_CAM_INPUT": ""
     },
-    "activities_data": {
-      "traffic_overspeeding_distancewise": {
-        "zones": {
-          "zone1": [
-            [28, 942],
-            [2643, 1037],
-            [2620, 1177],
-            [39, 1054]
-          ]
+  "activities_data": {
+    "traffic_overspeeding_distancewise": {
+      "zones": {
+        "zone1": [
+          [28, 942],
+          [2643, 1037],
+          [2620, 1177],
+          [39, 1054]
+        ]
+      },
+      "parameters": {
+        "real_distance": 10,
+        "speed_limit": {
+          "car": 30,
+          "truck": 30,
+          "motorcycle": 30
         },
-        "parameters": {
-          "real_distance": 10,
-          "speed_limit": {
-            "car": 30,
-            "truck": 30,
-            "motorcycle": 30
-          },
-          "calibration": 1.3668,
-          "radar_calibration": 1,
-          "lines": {
-            "lane1": [
-              [1304, 925],
-              [1232, 1110]
-            ]
-          }
+        "calibration": 1.3668,
+        "radar_calibration": 1,
+        "lines": {
+          "lane1": [
+            [1304, 925],
+            [1232, 1110]
+          ]
         }
       }
-    },
-    "save_settings": {
-      "save_snapshots": 0,
-      "save_rtsp_images": 0,
-      "take_cgi_snapshots": 0
-    },
-    "calibration_required": 2
-  }
-  
+    }
+  },
+  "save_settings": {
+    "save_snapshots": 0,
+    "save_rtsp_images": 0,
+    "take_cgi_snapshots": 0
+  },
+  "calibration_required": 2
+}

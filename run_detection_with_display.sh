@@ -77,8 +77,8 @@ run_detection() {
         return 1
     fi
 
-    print_status "Running: python basic_pipelines/detection.py --i $CAMERA_INPUT --disable-sync --disable-display"
-    python basic_pipelines/detection.py --i "$CAMERA_INPUT" --disable-sync --disable-display
+    print_status "Running: python basic_pipelines/detection.py --i $CAMERA_INPUT --disable-sync"
+    python basic_pipelines/detection.py --i "$CAMERA_INPUT" --disable-sync
 }
 
 # Retry logic

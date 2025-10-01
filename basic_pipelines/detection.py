@@ -8,6 +8,9 @@ import numpy as np
 import cv2
 import hailo
 import concurrent.futures
+from pathlib import Path
+import importlib
+from dotenv import load_dotenv
 
 # External Libraries
 import json
@@ -41,11 +44,6 @@ from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStrea
 
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
-# Initialize results queue
-results_analytics_queue = queue.Queue(maxsize=1)
-results_events_queue = queue.Queue(maxsize=100)
-# Initialize a deque to store tracker_ids for the last n frames
-last_n_frames_tracker_ids = deque(maxlen=30)
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
 class user_app_callback_class(app_callback_class):
@@ -79,6 +77,8 @@ class user_app_callback_class(app_callback_class):
         self.anchor_points_original = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
         self.last_n_frame_tracker_ids = None
+        # Initialize a deque to store tracker_ids for the last n frames
+        self.LNFCTI = deque(maxlen=30)
         self.time_stamp = deque(maxlen=4)
         self.cleaning_time_for_events = time.time()
         
@@ -408,7 +408,6 @@ class user_app_callback_class(app_callback_class):
 
 # This is the callback function that will be called when data is available from the pipeline
 def app_callback(pad, info, user_data,frame_type):
-    global last_n_frames_tracker_ids
     # Get the GstBuffer from the probe info
     buffer = info.get_buffer()
     # Check if the buffer is valid
@@ -498,8 +497,8 @@ def app_callback(pad, info, user_data,frame_type):
             user_data.anchor_points_original=anchor_points_original
             
             # Last n frame tracker ids
-            last_n_frames_tracker_ids.append(tracker_ids)
-            user_data.last_n_frame_tracker_ids = get_unique_tracker_ids(last_n_frames_tracker_ids)
+            user_data.LNFCTI.append(tracker_ids)
+            user_data.last_n_frame_tracker_ids = get_unique_tracker_ids(user_data.LNFCTI)
 
             # BEFORE: Clean every 60 seconds
             if int((time.time()-user_data.cleaning_time_for_events)) > 120:
@@ -530,11 +529,22 @@ def cleanup_resources():
     except Exception as e:
         print(f"❌ Error during cleanup: {e}")
 
+def load_activity_class(activity_name):
+    """Load activity class dynamically from basic_pipelines/activities/"""
+    try:
+        module = importlib.import_module(f"basic_pipelines.activities.{activity_name}")
+        return getattr(module, activity_name)  # Class name must match filename
+    except Exception as e:
+        print(f"❌ Failed to load {activity_name}: {e}")
+        return None
+    
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent.parent
     env_file     = project_root / ".env"
     env_path_str = str(env_file)
     os.environ["HAILO_ENV_FILE"] = env_path_str
+    # load .env into process environment
+    load_dotenv(env_path_str)
     # Logging is disabled - all errors sent to Kafka
     setup_logging()
 
@@ -561,6 +571,36 @@ if __name__ == "__main__":
         print(f"CRITICAL: Failed to load configuration: {e}")
         cleanup_resources()
         sys.exit(0)
+    
+    # === Overlay sensitive values from .env into config (so KafkaHandler etc read them) ===
+    kafka_vars = config.get("kafka_variables", {})
+    # If BROKER envs present, override
+    if os.getenv("BROKER_PRIMARY"):
+        kafka_vars["primary_broker"] = os.getenv("BROKER_PRIMARY")
+    if os.getenv("BROKER_SECONDARY"):
+        kafka_vars["secondary_broker"] = os.getenv("BROKER_SECONDARY")
+    config["kafka_variables"] = kafka_vars
+
+    # AWS S3 overrides (primary / secondary)
+    s3 = kafka_vars.get("AWS_S3", {})
+    if os.getenv("AWS_PRIMARY_KEY"):
+        s3.setdefault("primary", {})
+        s3["primary"]["aws_access_key_id"] = os.getenv("AWS_PRIMARY_KEY")
+    if os.getenv("AWS_PRIMARY_SECRET"):
+        s3.setdefault("primary", {})
+        s3["primary"]["aws_secret_access_key"] = os.getenv("AWS_PRIMARY_SECRET")
+    if os.getenv("AWS_PRIMARY_ENDPOINT"):
+        s3.setdefault("primary", {})
+        s3["primary"]["end_point_url"] = os.getenv("AWS_PRIMARY_ENDPOINT")
+    if os.getenv("AWS_SECONDARY_KEY"):
+        s3.setdefault("secondary", {})
+        s3["secondary"]["aws_access_key_id"] = os.getenv("AWS_SECONDARY_KEY")
+    if os.getenv("AWS_SECONDARY_SECRET"):
+        s3.setdefault("secondary", {})
+        s3["secondary"]["aws_secret_access_key"] = os.getenv("AWS_SECONDARY_SECRET")
+    kafka_vars["AWS_S3"] = s3
+    config["kafka_variables"] = kafka_vars
+
     # Setup the Hef-path with path existence check
     try:
         hef_path = config.get("default_arguments", {}).get("hef_path")
@@ -599,23 +639,7 @@ if __name__ == "__main__":
     user_data.save_snapshots = bool(save_settings.get("save_snapshots", 0))
     user_data.save_rtsp_images = bool(save_settings.get("save_rtsp_images", 0))
     print(f"Save settings loaded from config: snapshots={user_data.save_snapshots}, rtsp_images={user_data.save_rtsp_images}")
-    # Initialize radar if configured
-    if "radar_config" in config:
-        try:
-            radar_config = config["radar_config"]
-            user_data.radar_maxdiff=radar_config.get("max_diff_rais", 15)
-            user_data.radar_handler.init_radar(
-                port=radar_config.get("port", "/dev/ttyACM0"),
-                baudrate=radar_config.get("baudrate", 9600),
-                max_age=radar_config.get("max_age", 10),
-                max_diff_rais=radar_config.get("max_diff_rais", 15),
-                calibration_required=config.get("calibration_required", 2)
-            )
-            user_data.radar_handler.start_radar()
-        except Exception as e:
-            print(f"CRITICAL: Failed to initialize radar: {e}")
-            cleanup_resources()
-            sys.exit(0)
+   
         
     # Snapshot if configured
     if "camera_details" in config:
@@ -628,13 +652,17 @@ if __name__ == "__main__":
                     pwd=cam_config.get("password")
                 )
         except Exception as e:
-            print("DEBUG: Failed to initialize radar: {e}")
+            print("DEBUG: Failed to initialize CGI Snapshots: {e}")
             cleanup_resources()
             sys.exit(0)
     
     # Add recorder to user_data for frame recording
     user_data.recorder = kafka_handler.recorder
     
+    # Initialize results queue
+    results_analytics_queue = queue.Queue(maxsize=1)
+    results_events_queue = queue.Queue(maxsize=100)
+
     # Getting Kafka Configuration
     kafka_variables = config.get("kafka_variables", {})
     user_data.reset_threshold = kafka_variables["reset_threshold"]
@@ -656,9 +684,28 @@ if __name__ == "__main__":
     zones_data = {}
     parameters_data={}
     violation_id_data={}
+
+    active_instances=[]
+    active_methods=[]
     for activity, details in config["activities_data"].items():
-        if "zones" in details and activity in active_activities:
+        if activity in available_activities and activity in active_activities:
             if activity=="traffic_overspeeding_distancewise":
+                # Initialize radar if configured
+                if "radar_config" in config:
+                    try:
+                        radar_config = config["radar_config"]
+                        user_data.radar_maxdiff=radar_config.get("max_diff_rais", 15)
+                        user_data.radar_handler.init_radar(
+                            port=radar_config.get("port", "/dev/ttyACM0"),
+                            baudrate=radar_config.get("baudrate", 9600),
+                            max_age=radar_config.get("max_age", 10),
+                            max_diff_rais=radar_config.get("max_diff_rais", 15),
+                            calibration_required=config.get("calibration_required", 2)
+                        )
+                        user_data.radar_handler.start_radar()
+                    except Exception as e:
+                        print(f"CRITICAL: Failed to initialize radar: {e}")
+                        continue
                 zones_data[activity] = {zone: Polygon(coords) for zone, coords in details["zones"].items()}
                 parameters_data[activity]=details["parameters"]
                 violation_id_data[activity]=[]
@@ -690,21 +737,36 @@ if __name__ == "__main__":
                     parameters_data[activity]["lines_length"][lane_name] = total_distance
 
                 user_data.active_activities_for_cleaning.append(activity)
+            
+            else:
+                zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
+                parameters_data=details["parameters"]
+                ActivityClass = load_activity_class(activity)
+                if not ActivityClass:
+                    continue
+
+                # Pass user_data as parent
+                activity_instance = ActivityClass(user_data,zones_data,parameters_data)
+                active_instances.append(activity_instance)
+
+                # Register `run()` if available
+                if hasattr(activity_instance, "run") and callable(activity_instance.run):
+                    active_methods.append(activity_instance.run)
+
+
     #Assigning Zones Data to Activity Instance
     user_data.zone_data=zones_data
     user_data.parameters_data = parameters_data
     user_data.violation_id_data = violation_id_data
-
-    # Making Active Methods 
-    active_methods=[]
     for activity in active_activities:
-        # Retrieve the method from the Activities instance if it exists
-        activity_func = getattr(user_data, activity, None)
-        if callable(activity_func):
-            active_methods.append(activity_func)
-        else:
-            # Activity not recognized - silently continue
-            pass
+        if activity=="traffic_overspeeding_distancewise":
+            # Retrieve the method from the Activities instance if it exists
+            activity_func = getattr(user_data, activity, None)
+            if callable(activity_func):
+                active_methods.append(activity_func)
+            else:
+                # Activity not recognized - silently continue
+                pass
 
     user_data.active_methods=active_methods
     
