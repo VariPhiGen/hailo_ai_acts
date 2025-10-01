@@ -51,7 +51,22 @@
           ]
         }
       }
-    }
+    },
+    "TimeBasedUnauthorizedAccess":{
+      "zones":{
+          "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
+
+      },
+      "parameters":{
+          "subcategory_mapping":["person"],
+          "frame_accuracy": 2,
+        "scheduled_time": [{
+          "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
+          "days": ["Monday", "Wednesday", "Friday"]}],
+        "timezone":"Asia/Kolkata",
+        "last_check_time":0
+  }
+}
   },
   "save_settings": {
     "save_snapshots": 0,

@@ -763,7 +763,7 @@ if __name__ == "__main__":
                 if hasattr(activity_instance, "run") and callable(activity_instance.run):
                     active_methods.append(activity_instance.run)
         else:
-            print("Actiity Not Available")
+            print("This Activity is not Active Right Now")
 
     #Assigning Zones Data to Activity Instance
     user_data.zone_data=zones_data
