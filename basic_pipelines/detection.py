@@ -583,21 +583,31 @@ if __name__ == "__main__":
 
     # AWS S3 overrides (primary / secondary)
     s3 = kafka_vars.get("AWS_S3", {})
-    if os.getenv("AWS_PRIMARY_KEY"):
+    if os.getenv("AWS_PRIMARY_KEY") and os.getenv("AWS_PRIMARY_SECRET"):
         s3.setdefault("primary", {})
         s3["primary"]["aws_access_key_id"] = os.getenv("AWS_PRIMARY_KEY")
-    if os.getenv("AWS_PRIMARY_SECRET"):
-        s3.setdefault("primary", {})
         s3["primary"]["aws_secret_access_key"] = os.getenv("AWS_PRIMARY_SECRET")
-    if os.getenv("AWS_PRIMARY_ENDPOINT"):
-        s3.setdefault("primary", {})
         s3["primary"]["end_point_url"] = os.getenv("AWS_PRIMARY_ENDPOINT")
-    if os.getenv("AWS_SECONDARY_KEY"):
+        s3["primary"]["region_name"] = os.getenv("AWS_PRIMARY_REGION", "ap-south-1")
+        s3["primary"]["BUCKET_NAME"] = os.getenv("AWS_PRIMARY_BUCKET_NAME", "arrestovideos")
+        s3["primary"]["org_img_fn"] = os.getenv("AWS_PRIMARY_ORG_IMG_FN", "violationoriginalimages/")
+        s3["primary"]["video_fn"] = os.getenv("AWS_PRIMARY_VIDEO_FN", "videoclips/")
+        s3["primary"]["cgi_fn"] = os.getenv("AWS_PRIMARY_CGI_FN", "cgisnapshots/")
+   
+    if os.getenv("AWS_SECONDARY_KEY") and os.getenv("AWS_SECONDARY_SECRET"):
         s3.setdefault("secondary", {})
         s3["secondary"]["aws_access_key_id"] = os.getenv("AWS_SECONDARY_KEY")
-    if os.getenv("AWS_SECONDARY_SECRET"):
-        s3.setdefault("secondary", {})
         s3["secondary"]["aws_secret_access_key"] = os.getenv("AWS_SECONDARY_SECRET")
+        s3["secondary"]["end_point_url"] = os.getenv("AWS_SECONDARY_ENDPOINT")
+        s3["secondary"]["region_name"] = os.getenv("AWS_SECONDARY_REGION", "ap-south-1")
+        s3["secondary"]["BUCKET_NAME"] = os.getenv("AWS_SECONDARY_BUCKET_NAME", "arrestovideos")
+        s3["secondary"]["org_img_fn"] = os.getenv("AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
+        s3["secondary"]["video_fn"] = os.getenv("AWS_SECONDARY_VIDEO_FN", "videoclips/")
+        s3["secondary"]["cgi_fn"] = os.getenv("AWS_SECONDARY_CGI_FN", "cgisnapshots/")
+
+        
+    
+
     kafka_vars["AWS_S3"] = s3
     config["kafka_variables"] = kafka_vars
 
@@ -626,6 +636,7 @@ if __name__ == "__main__":
         user_data.labels_json = None
     # Set up Kafka error logging for radar handler
     try:
+        print(config)
         kafka_handler = KafkaHandler(config)
         user_data.kafka_handler = kafka_handler
         
@@ -665,7 +676,6 @@ if __name__ == "__main__":
 
     # Getting Kafka Configuration
     kafka_variables = config.get("kafka_variables", {})
-    user_data.reset_threshold = kafka_variables["reset_threshold"]
 
     # Creating Thread for Kafka
     kafka_thread = Thread(target=kafka_handler.run_kafka_loop, args=(results_events_queue, results_analytics_queue))
@@ -752,7 +762,8 @@ if __name__ == "__main__":
                 # Register `run()` if available
                 if hasattr(activity_instance, "run") and callable(activity_instance.run):
                     active_methods.append(activity_instance.run)
-
+        else:
+            print("Actiity Not Available")
 
     #Assigning Zones Data to Activity Instance
     user_data.zone_data=zones_data
