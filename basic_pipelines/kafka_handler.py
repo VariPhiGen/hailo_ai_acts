@@ -273,7 +273,7 @@ class KafkaHandler:
                             Config=S3_TRANSFER_CONFIG,
                         )
                         url = f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
-                        return url
+                        return unique_filename
                     else:
                         key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
                         client.put_object(
@@ -283,7 +283,7 @@ class KafkaHandler:
                             ContentType=content_type,
                         )
                         url = f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
-                        return url
+                        return unique_filename
                 except Exception as e:
                     print(f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} failed: {e}")
                     time.sleep(0.5 * (attempt + 1))
