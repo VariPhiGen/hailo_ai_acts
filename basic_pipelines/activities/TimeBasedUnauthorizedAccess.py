@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 import pytz
-from activity_helper_utils import (
+from activities.activity_helper_utils import (
     is_bottom_in_zone,xywh_original_percentage
 )
 class TimeBasedUnauthorizedAccess:
