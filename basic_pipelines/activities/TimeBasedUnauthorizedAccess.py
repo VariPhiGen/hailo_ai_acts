@@ -29,7 +29,7 @@ class TimeBasedUnauthorizedAccess:
         Monitor for areas that should have someone present but don't.
         Alerts when no person is detected in a zone for too long.
         """
-        
+        print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
             # Loop through the scheduled times (you may have multiple schedules)
