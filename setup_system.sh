@@ -108,6 +108,12 @@ cat << 'EOF' | sudo tee /etc/udev/rules.d/99-radar.rules
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666",SYMLINK+="ttyACMr"
 EOF
 
+# Create udev rules for relay devices
+cat << 'EOF' | sudo tee /etc/udev/rules.d/99-relay.rules
+# Relay device rules
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", MODE="0666", SYMLINK+="relay_device"
+EOF
+
 
 # Reload udev rules
 sudo udevadm control --reload-rules

@@ -30,6 +30,7 @@ from snapshotapi import Snapshot
 # Local modules
 from kafka_handler import KafkaHandler
 from radar_handler import RadarHandler
+from relay import Relay
 from helper_utils import (
     setup_logging, encode_frame_to_bytes, is_vehicle_in_zone, crop_image_numpy,
     closest_line_projected_distance, get_unique_tracker_ids, calculate_distance
@@ -85,6 +86,9 @@ class user_app_callback_class(app_callback_class):
         # Frame monitoring (for external monitoring only)
         self.frame_monitor_count = 0
 
+        #Relay handler
+        self.relay_handler=Relay()
+
         # Radar handler
         self.radar_handler = RadarHandler()
         self.radar_maxdiff = None
@@ -105,7 +109,7 @@ class user_app_callback_class(app_callback_class):
         
         # Active methods
         self.active_methods = None
-        self.active_activities_for_cleaning = []
+        self.active_activities_for_cleaning = {}
         
         # Run Triggering Loop for raving Camera Snapshot
         self.cam = None
@@ -324,13 +328,15 @@ class user_app_callback_class(app_callback_class):
 
     def cleaning_events_data_with_last_frames(self):
         # Cleaning Violations
-        for activity in self.active_activities_for_cleaning:
+        for activity,method in self.active_activities_for_cleaning.items():
             if activity == "traffic_overspeeding_distancewise":
                 for tracker_id in list(self.traffic_overspeeding_distancewise_data.keys()):
                     # Check if tracker_id is not in self.last_n_frame_tracker_ids
                     if tracker_id not in self.last_n_frame_tracker_ids:
                         # Remove the tracker_id from self.traffic_overspeeding_distancewise_data
                         del self.traffic_overspeeding_distancewise_data[tracker_id]
+            else:
+                method()
     
     # Activities Logics
     def traffic_overspeeding_distancewise(self):
@@ -746,7 +752,7 @@ if __name__ == "__main__":
                     
                     parameters_data[activity]["lines_length"][lane_name] = total_distance
 
-                user_data.active_activities_for_cleaning.append(activity)
+                user_data.active_activities_for_cleaning[activity]=None
             
             else:
                 zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
@@ -759,9 +765,17 @@ if __name__ == "__main__":
                 activity_instance = ActivityClass(user_data,zones_data,parameters_data)
                 active_instances.append(activity_instance)
 
-                # Register `run()` if available
-                if hasattr(activity_instance, "run") and callable(activity_instance.run):
-                    active_methods.append(activity_instance.run)
+                # Register available methods from the activity instance
+                if isinstance(activity_instance, object):
+                    # Register run() if available
+                    run_method = getattr(activity_instance, "run", None)
+                    if callable(run_method):
+                        active_methods.append(run_method)
+
+                    # Register cleaning() if available
+                    cleaning_method = getattr(activity_instance, "cleaning", None)
+                    if callable(cleaning_method):
+                        user_data.active_activities_for_cleaning[activity] = cleaning_method
         else:
             print("This Activity is not Active Right Now")
 
