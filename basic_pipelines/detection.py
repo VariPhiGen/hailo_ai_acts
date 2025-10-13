@@ -30,7 +30,7 @@ from snapshotapi import Snapshot
 # Local modules
 from kafka_handler import KafkaHandler
 from radar_handler import RadarHandler
-from relay import Relay
+from relay_handler import Relay
 from helper_utils import (
     setup_logging, encode_frame_to_bytes, is_vehicle_in_zone, crop_image_numpy,
     closest_line_projected_distance, get_unique_tracker_ids, calculate_distance

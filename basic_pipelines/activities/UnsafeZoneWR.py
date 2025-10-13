@@ -4,7 +4,6 @@ import pytz
 from activities.activity_helper_utils import (
     is_bottom_in_zone,xywh_original_percentage
 )
-from relay import Relay
 
 class UnsafeZoneWR:
     def __init__(self, parent,zone_data,parameters):

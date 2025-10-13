@@ -12,10 +12,10 @@ class TimeBasedUnauthorizedAccess:
         self.parent=parent
         self.parameters = parameters
         self.zone_data = zone_data
-        self.TBUA_data = {}
+        self.running_data = {}
         # Initiating Zone wise
         for zone_name in self.zone_data.keys():
-            self.TBUA_data[zone_name]={}
+            self.running_data[zone_name]={}
         self.violation_id_data = []
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
@@ -66,12 +66,12 @@ class TimeBasedUnauthorizedAccess:
                             anchor = self.parent.anchor_points_original[idx]
                             for zone_name, zone_polygon in self.zone_data.items():
                                 if tracker_id not in self.violation_id_data  and is_bottom_in_zone(anchor, zone_polygon):
-                                    if tracker_id not in self.TBUA_data[zone_name]:
-                                        self.TBUA_data[zone_name][tracker_id] = 1
+                                    if tracker_id not in self.running_data[zone_name]:
+                                        self.running_data[zone_name][tracker_id] = 1
                                     else:
-                                        self.TBUA_data[zone_name][tracker_id]+= 1
+                                        self.running_data[zone_name][tracker_id]+= 1
 
-                                    if self.TBUA_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
+                                    if self.running_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
                                         self.violation_id_data.append(tracker_id)
                                         xywh=xywh_original_percentage(box)
                                         datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
@@ -82,9 +82,9 @@ class TimeBasedUnauthorizedAccess:
     def cleaning(self):
         self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]
         for zone_name in self.zone_data.keys():
-            self.TBUA_data = {
+            self.running_data = {
                 key: value
-                for key, value in self.TBUA_data[zone_name].items()
+                for key, value in self.running_data[zone_name].items()
                 if key in self.parent.last_n_frame_tracker_ids
             }
         

@@ -79,20 +79,6 @@ def is_vehicle_in_zone(anchor_point: Tuple[float, float], zone_polygon: Polygon)
     vehicle_point = Point(x_center, y_center)
     return zone_polygon.contains(vehicle_point)
 
-def is_bottom_in_zone(anchor_point: Tuple[float, float], zone_polygon: Polygon) -> bool:
-    """
-    Check if the center of the vehicle's bounding box is inside a zone.
-    
-    Args:
-        anchor_point: Center point of vehicle (x, y)
-        zone_polygon: Shapely Polygon object for the zone
-        
-    Returns:
-        True if vehicle is in zone, False otherwise
-    """
-    xb_center, y_center = anchor_point
-    bottom_point = Point(xb_center, y_center)
-    return zone_polygon.contains(bottom_point)
 
 
 def crop_image_numpy(image_array: np.ndarray, bounding_box: Tuple[float, float, float, float], pad: int = 50) -> np.ndarray:
