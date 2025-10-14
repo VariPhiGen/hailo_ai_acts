@@ -155,7 +155,7 @@ class user_app_callback_class(app_callback_class):
         asyncio.set_event_loop(self.main_loop)
         self.main_loop.run_forever()
         
-    async def trigger_snapshot_loop(self, xywh, class_name, parameters, datetimestamp, confidence=1, anprimage=None):
+    async def trigger_snapshot_loop(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, anprimage=None):
         # Use existing main_loop instead of creating new one
         try:
             final_speed = parameters["speed"]
@@ -206,7 +206,7 @@ class user_app_callback_class(app_callback_class):
             "org_img": image,
             "snap_shot": cgi_snapshot,
             "video": video_bytes,  # Video bytes ready before queuing
-            "absolute_bbox": {"xywh": xywh, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status},
+            "absolute_bbox": {"xywh": xywh,"subcategory":subcategory, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status},
             "datetimestamp": datetimestamp,
             "imgsz": f"{width}:{height}",
             "color": "#FFFF00"
@@ -323,8 +323,8 @@ class user_app_callback_class(app_callback_class):
             # Handle gracefully without blocking
             pass
 
-    def create_result_overspeeding_events(self, xywh, class_name, parameters, datetimestamp, confidence=1, anprimage=None):
-        asyncio.run_coroutine_threadsafe(self.trigger_snapshot_loop(xywh, class_name, parameters, datetimestamp, confidence, anprimage), self.main_loop)
+    def create_result_events(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, anprimage=None):
+        asyncio.run_coroutine_threadsafe(self.trigger_snapshot_loop(xywh, class_name,subcategory, parameters, datetimestamp, confidence, anprimage), self.main_loop)
 
     def cleaning_events_data_with_last_frames(self):
         # Cleaning Violations
@@ -399,7 +399,7 @@ class user_app_callback_class(app_callback_class):
                 anprimage = crop_image_numpy(self.image, result["box"])
                 xywh = [0, 0, 100, 100]
                 datetimestamp = f"{datetime.now(self.ist_timezone).isoformat()}"
-                self.create_result_overspeeding_events(xywh, obj_class, {"speed": result["radar_speed"],"tag":"RDR"}, datetimestamp, 1, anprimage)
+                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["radar_speed"],"tag":"RDR"}, datetimestamp, 1, anprimage)
             
             elif 55 > result["speed"] > (self.parameters_data["traffic_overspeeding_distancewise"]["speed_limit"][result["obj_class"]])+5 and result["radar_speed"] is None:
                 # Get the bounding rectangle of the polygon
@@ -407,7 +407,7 @@ class user_app_callback_class(app_callback_class):
                 anprimage = crop_image_numpy(self.image, result["box"])
                 xywh = [0, 0, 100, 100]
                 datetimestamp = f"{datetime.now(self.ist_timezone).isoformat()}"
-                self.create_result_overspeeding_events(xywh, obj_class, {"speed": result["speed"],"tag":"AI"}, datetimestamp, 1, anprimage)
+                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["speed"],"tag":"AI"}, datetimestamp, 1, anprimage)
 # -----------------------------------------------------------------------------------------------
 # User-defined callback function
 # -----------------------------------------------------------------------------------------------
@@ -585,7 +585,11 @@ if __name__ == "__main__":
         kafka_vars["primary_broker"] = os.getenv("BROKER_PRIMARY")
     if os.getenv("BROKER_SECONDARY"):
         kafka_vars["secondary_broker"] = os.getenv("BROKER_SECONDARY")
-    config["kafka_variables"] = kafka_vars
+    if os.getenv("BROKER_PRIMARY") or os.getenv("BROKER_SECONDARY"):
+        kafka_vars["broker_failover_timeout"]= int(os.getenv("BROKER_FAILOVER_TIMEOUT", 30)),
+        kafka_vars["send_analytics_pipeline"]= os.getenv("SEND_ANALYTICS_PIPELINE", "variphianalytics"),
+        kafka_vars["send_events_pipeline"]= os.getenv("SEND_EVENTS_PIPELINE", "variphievents"),
+        kafka_vars["log_topic"]= os.getenv("LOG_TOPIC", "error_log")
 
     # AWS S3 overrides (primary / secondary)
     s3 = kafka_vars.get("AWS_S3", {})
@@ -610,6 +614,9 @@ if __name__ == "__main__":
         s3["secondary"]["org_img_fn"] = os.getenv("AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
         s3["secondary"]["video_fn"] = os.getenv("AWS_SECONDARY_VIDEO_FN", "videoclips/")
         s3["secondary"]["cgi_fn"] = os.getenv("AWS_SECONDARY_CGI_FN", "cgisnapshots/")
+    
+    s3["s3_failover_timeout"]= int(os.getenv("S3_FAILOVER_TIMEOUT", 30)),
+    s3["upload_retries"]= int(os.getenv("S3_UPLOAD_RETRIES", 3))
 
         
     
@@ -762,7 +769,7 @@ if __name__ == "__main__":
                     continue
 
                 # Pass user_data as parent
-                activity_instance = ActivityClass(user_data,zones_data,parameters_data)
+                activity_instance = ActivityClass(user_data,zone_data,parameters_data)
                 active_instances.append(activity_instance)
 
                 # Register available methods from the activity instance

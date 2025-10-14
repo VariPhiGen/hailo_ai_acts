@@ -25,7 +25,8 @@ class UnsafeZoneWR:
         except Exception:
             self.relay = None
         # Initiating Zone wise
-        for zone_name in self.zone_data.keys():
+        for zone_name in zone_data.keys():
+        
             self.running_data[zone_name]={}
         self.violation_id_data = []
         
@@ -40,12 +41,13 @@ class UnsafeZoneWR:
         Monitor for areas that should have someone present but don't.
         Alerts when no person is detected in a zone for too long.
         """
-        print(self.parent.frame_monitor_count)
+        #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
             self.relay.check_auto_off(self.switch_relay)
             
             offender_indices = [i for i, cls in enumerate(self.parent.classes) if cls in self.parameters["subcategory_mapping"]]
+            print(offender_indices, self.running_data)
 
             for idx in offender_indices:
                 box=self.parent.detection_boxes[idx]
@@ -69,16 +71,16 @@ class UnsafeZoneWR:
                                     self.relay.start_time[index]=time.time()
                             if tracker_id not in self.violation_id_data:
                                 self.violation_id_data.append(tracker_id)
-                                xywh=xywh_original_percentage(box)
+                                xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
                                 datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
                                 self.parent.create_result_events(xywh,obj_class,f"Hazardous Area-Unsafe Zone",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
-
+            
         #print("Yes Running Successfully", self.zone_data,self.parameters)
 
     def cleaning(self):
         self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]
         for zone_name in self.zone_data.keys():
-            self.running_data = {
+            self.running_data[zone_name] = {
                 key: value
                 for key, value in self.running_data[zone_name].items()
                 if key in self.parent.last_n_frame_tracker_ids
