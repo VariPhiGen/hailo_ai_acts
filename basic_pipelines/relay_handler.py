@@ -26,7 +26,7 @@ class Relay(object):
 
     def __init__(self, idVendor=0x16c0, idProduct=0x05df):
         self.start_time = {i: 0 for i in range(1, 9)}
-        self.auto_off_sec=5
+        self.auto_off_sec=3
 
         self.vendor_id = idVendor
         self.product_id = idProduct
@@ -65,6 +65,7 @@ class Relay(object):
         for relay in relays_to_check:
             # Only consider if relay was turned ON
             start = self.start_time.get(relay, 0)
+            #print(start,relay)
             if start:
                 # Check if relay is actually ON
                 status = self.state(relay)  # True = ON, False = OFF
