@@ -120,8 +120,8 @@ class user_app_callback_class(app_callback_class):
         
         # Run Triggering Loop for raving Camera Snapshot
         self.cam = None
-        user_data.api_mode=None
-        user_data.kafka_mode=None
+        self.api_mode=None
+        self.kafka_mode=None
         
         # Initialize cropping directory path once
         self.cropping_dir = os.path.join(os.getcwd(), "SVDS2", "original_croppings")
