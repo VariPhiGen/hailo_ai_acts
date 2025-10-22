@@ -655,8 +655,6 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"CRITICAL: Failed to initialize Kafka handler: {e}")
-        cleanup_resources()
-        sys.exit(0)
 
     # Get save settings from config
     save_settings = config.get("save_settings", {})
@@ -689,11 +687,15 @@ if __name__ == "__main__":
 
     # Getting Kafka Configuration
     kafka_variables = config.get("kafka_variables", {})
+    dashboard_contectivity=config.get("dashboard_connectivity",{})
+    api_mode=dashboard_contectivity.get("api",0)
+    kafka_mode=dashboard_contectivity.get("kafka",0)
 
     # Creating Thread for Kafka
-    kafka_thread = Thread(target=kafka_handler.run_kafka_loop, args=(results_events_queue, results_analytics_queue))
-    kafka_thread.daemon = True
-    kafka_thread.start()
+    if api_mode==1 or kafka_mode==1:
+        kafka_thread = Thread(target=kafka_handler.run_kafka_loop, args=(results_events_queue, results_analytics_queue,api_mode,kafka_mode))
+        kafka_thread.daemon = True
+        kafka_thread.start()
     
     #Getting Data available
     sensor_id=config.get("sensor_id")

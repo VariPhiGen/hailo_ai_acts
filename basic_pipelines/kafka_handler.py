@@ -15,6 +15,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.client import Config
 from video_clipper import VideoClipRecorder
+from api_utils import load_api_template, call_api
 
 # S3 Transfer configuration
 S3_TRANSFER_CONFIG = TransferConfig(
@@ -54,6 +55,10 @@ class KafkaHandler:
         # Health check
         self.health_check_interval = int(self.config.get("kafka_variables", {}).get("health_check_interval", 15))
         self._health_thread = None
+
+        #API Integration
+        # Load template
+        self.api_template = None
 
         # Setup AWS S3 and Video Recorder
         self._setup_aws_s3()
@@ -95,7 +100,7 @@ class KafkaHandler:
                     aws_access_key_id=config.get("aws_access_key_id"),
                     aws_secret_access_key=config.get("aws_secret_access_key"),
                     region_name=config.get("region_name"),
-                    endpoint_url=f"http://{config.get('end_point_url')}" if config.get("end_point_url") else None,
+                    endpoint_url=f"{config.get('end_point_url')}" if config.get("end_point_url") else None,
                     config=Config(signature_version="s3v4")
                 )
                 self.s3_clients[name] = client
@@ -272,7 +277,7 @@ class KafkaHandler:
                             ExtraArgs={"ContentType": content_type},
                             Config=S3_TRANSFER_CONFIG,
                         )
-                        url = f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
+                        url = f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
                         return unique_filename
                     else:
                         key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
@@ -282,7 +287,7 @@ class KafkaHandler:
                             Body=file_bytes,
                             ContentType=content_type,
                         )
-                        url = f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
+                        url = f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
                         return unique_filename
                 except Exception as e:
                     print(f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} failed: {e}")
@@ -308,7 +313,7 @@ class KafkaHandler:
                         ExtraArgs={"ContentType": content_type},
                         Config=S3_TRANSFER_CONFIG
                     )
-                    return f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
+                    return f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
                 else:
                     key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
                     client.put_object(
@@ -317,7 +322,7 @@ class KafkaHandler:
                         Body=file_bytes,
                         ContentType=content_type
                     )
-                    return f"http://{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
+                    return f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
             except Exception as e:
                 print(f"DEBUG: Last-ditch upload to {name} failed: {e}")
                 continue
@@ -359,7 +364,7 @@ class KafkaHandler:
                 self.messages_since_flush = 0
 
     # ------------------------- Queue processing -------------------------
-    def process_events_queue(self, events_queue: queue.Queue, topic: str) -> bool:
+    def process_events_queue(self, events_queue: queue.Queue, topic: str,api_m,kafka_m) -> bool:
         try:
             message = events_queue.get(timeout=1)
             if message is None or topic == "None":
@@ -389,21 +394,30 @@ class KafkaHandler:
             message["video"] = uploads.get("video")
 
             if message["org_img"] is not None:
-                if not self._ensure_kafka_pipeline():
-                    print("DEBUG: Kafka pipeline unavailable, skipping message")
-                    return False
-                try:
-                    future = self.kafka_pipeline.send(topic, message)
-                    record_metadata = future.get(timeout=10)
-                    self._smart_flush()
-                    #print(f"DEBUG: Message sent to partition {record_metadata.partition} offset {record_metadata.offset}")
-                    return True
-                except (KafkaError, NoBrokersAvailable):
-                    self._handle_broker_failure()
-                    return False
-                except Exception as e:
-                    print(f"DEBUG: Kafka send failed: {e}")
-                    return False
+                if api_m:                    
+                    try:
+                        # Option 1: With API key
+                        response = call_api(self.api_template, "upload_data", message)
+                    except Exception as e:
+                        print(f"DEBUG Call Failed: {e}")
+                
+                if kafka_m:
+                    if not self._ensure_kafka_pipeline():
+                        print("DEBUG: Kafka pipeline unavailable, skipping message")
+                        return False
+                    try:
+                        future = self.kafka_pipeline.send(topic, message)
+                        record_metadata = future.get(timeout=10)
+                        self._smart_flush()
+                        #print(f"DEBUG: Message sent to partition {record_metadata.partition} offset {record_metadata.offset}")
+                        return True
+                    except (KafkaError, NoBrokersAvailable):
+                        self._handle_broker_failure()
+                        return False
+                    except Exception as e:
+                        print(f"DEBUG: Kafka send failed: {e}")
+                        return False
+                return True
             else:
                 print("DEBUG: Insufficient uploads, message skipped")
                 return False
@@ -415,11 +429,19 @@ class KafkaHandler:
             return False
 
     # ------------------------- Main loop -------------------------
-    def run_kafka_loop(self, events_queue: queue.Queue, analytics_queue: queue.Queue = None):
+    def run_kafka_loop(self, events_queue: queue.Queue, analytics_queue: queue.Queue = None, api_mode = False, kafka_mode = False ):
         """Main Kafka processing loop - runs indefinitely until shutdown is requested"""
         kafka_config = self.config.get("kafka_variables", {})
         send_events_pipeline = kafka_config.get("send_events_pipeline")
         queues_and_topics = [(events_queue, send_events_pipeline)]
+        api_m = True if api_mode == 1 else False
+        kafka_m = True if kafka_mode == 1 else False
+
+        try:
+            if api_m:
+                self.api_template = load_api_template("api_template.json")
+        except:
+            print(f"FAILED TO LOAD API Template")
         consecutive_empty_cycles = 0
         retry_sleep = 1
 
@@ -428,7 +450,7 @@ class KafkaHandler:
 
         while not self._stop_event.is_set():
             try:
-                if not self._ensure_kafka_pipeline():
+                if not self._ensure_kafka_pipeline() and kafka_m:
                     time.sleep(retry_sleep)
                     retry_sleep = min(retry_sleep * 2, 10)
                     continue
@@ -436,12 +458,12 @@ class KafkaHandler:
 
                 messages_processed = 0
                 for queue_obj, topic in queues_and_topics:
-                    if self.process_events_queue(queue_obj, topic):
+                    if self.process_events_queue(queue_obj, topic,api_m,kafka_m):
                         messages_processed += 1
 
                 if messages_processed == 0:
                     consecutive_empty_cycles += 1
-                    time.sleep(min(0.5 * consecutive_empty_cycles, 5))
+                    time.sleep(min(1 * consecutive_empty_cycles, 5))
                 else:
                     consecutive_empty_cycles = 0
                     time.sleep(0.01)

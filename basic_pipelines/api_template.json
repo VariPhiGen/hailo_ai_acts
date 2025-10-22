@@ -1,0 +1,19 @@
+{
+    "base_url": "https://example.com/api/v1",
+    "endpoints": {
+      "upload_data": {
+        "path": "/upload",
+        "method": "POST",
+        "required_fields": {
+          "timestamp": "timestamp_data",
+          "camera_id": "camera_id",
+          "image": "image_base64"
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{API_KEY}}"
+        }
+      }
+    }
+  }
+  
