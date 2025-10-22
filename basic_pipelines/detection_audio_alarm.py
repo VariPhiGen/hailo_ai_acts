@@ -122,6 +122,12 @@ class user_app_callback_class(app_callback_class):
         self.cam = None
         self.api_mode=None
         self.kafka_mode=None
+
+        # Kafka Handler
+        self.kafka_handler=None
+
+        #recorder
+        self.recorder=None
         
         # Initialize cropping directory path once
         self.cropping_dir = os.path.join(os.getcwd(), "SVDS2", "original_croppings")
@@ -186,7 +192,7 @@ class user_app_callback_class(app_callback_class):
         
         # Generate video bytes first (with timeout)
         video_bytes = None
-        if hasattr(self, 'take_video'):
+        if hasattr(self, 'take_video') and self.recorder is not None:
             try:
                 video_bytes = await asyncio.wait_for(
                     self.main_loop.run_in_executor(
@@ -205,7 +211,7 @@ class user_app_callback_class(app_callback_class):
 
         
         # Fire-and-forget RTSP save
-        if hasattr(self, 'save_rtsp_images') and self.save_rtsp_images:
+        if hasattr(self, 'save_rtsp_images') and self.save_rtsp_images and self.recorder is not None:
             asyncio.create_task(self._async_save_rtsp(anprimage, suffix))
         
         # Create message with complete data
@@ -222,7 +228,6 @@ class user_app_callback_class(app_callback_class):
         
         #API Calling
         self.save_media_and_call_api(message)
-
 
         # Queue message with complete data
         if user_data.api_mode==1 or user_data.kafka_mode==1:
@@ -302,7 +307,7 @@ class user_app_callback_class(app_callback_class):
             except Exception as e:
                 print(f"❌ Failed to replace message: {e}")
                 # Silently drop if all else fails
-
+    
     def save_media_and_call_api(message,
                             media_host="10.144.1.50",
                             api_host="10.144.1.100:8000"):
@@ -341,7 +346,6 @@ class user_app_callback_class(app_callback_class):
             print("✅ Event sent:", r.json())
         except Exception as e:
             print(f"❌ Failed to send event: {e}")
-
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
 # -----------------------------------------------------------------------------------------------
@@ -489,7 +493,8 @@ def app_callback(pad, info, user_data,frame_type):
             user_data.time_stamp.append(ts)
             # Get video frame
             frame = get_numpy_from_buffer(buffer, format, width, height)
-            user_data.recorder.add_frame(frame)
+            if user_data.recorder is not None:
+                user_data.recorder.add_frame(frame)
             
             
         # Get the detections from the buffer
@@ -683,14 +688,7 @@ if __name__ == "__main__":
         print(f"❌ Error setting up file paths: {e}")
         user_data.hef_path = None
         user_data.labels_json = None
-    # Set up Kafka error logging for radar handler
-    try:
-        print(config)
-        kafka_handler = KafkaHandler(config)
-        user_data.kafka_handler = kafka_handler
-        
-    except Exception as e:
-        print(f"CRITICAL: Failed to initialize Kafka handler: {e}")
+    
 
     # Get save settings from config
     save_settings = config.get("save_settings", {})
@@ -715,8 +713,6 @@ if __name__ == "__main__":
             cleanup_resources()
             sys.exit(0)
     
-    # Add recorder to user_data for frame recording
-    user_data.recorder = kafka_handler.recorder
     
     # Initialize results queue
     results_analytics_queue = queue.Queue(maxsize=1)
@@ -730,6 +726,16 @@ if __name__ == "__main__":
 
     # Creating Thread for Kafka
     if user_data.api_mode==1 or user_data.kafka_mode==1:
+        # Set up Kafka error logging for radar handler
+        try:
+            print(config)
+            kafka_handler = KafkaHandler(config)
+            user_data.kafka_handler = kafka_handler
+            # Add recorder to user_data for frame recording
+            user_data.recorder = kafka_handler.recorder
+            
+        except Exception as e:
+            print(f"CRITICAL: Failed to initialize Kafka handler: {e}")
         kafka_thread = Thread(target=kafka_handler.run_kafka_loop, args=(results_events_queue, results_analytics_queue,user_data.api_mode,user_data.kafka_mode))
         kafka_thread.daemon = True
         kafka_thread.start()
