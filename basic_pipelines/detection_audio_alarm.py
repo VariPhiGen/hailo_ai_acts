@@ -27,6 +27,12 @@ import atexit
 import signal
 from snapshotapi import Snapshot
 
+#User Creation
+import getpass
+user = getpass.getuser()  # auto-detect username
+print("User is",user)
+import requests
+
 # Local modules
 from kafka_handler import KafkaHandler
 from radar_handler import RadarHandler
@@ -215,6 +221,8 @@ class user_app_callback_class(app_callback_class):
         }
         
         #API Calling
+        self.save_media_and_call_api(message)
+
 
         # Queue message with complete data
         if user_data.api_mode==1 or user_data.kafka_mode==1:
@@ -294,7 +302,45 @@ class user_app_callback_class(app_callback_class):
             except Exception as e:
                 print(f"❌ Failed to replace message: {e}")
                 # Silently drop if all else fails
-    
+
+    def save_media_and_call_api(message,
+                            media_host="10.144.1.50",
+                            api_host="10.144.1.100:8000"):
+        global user
+        media_path = f"/home/{user}/media"
+        os.makedirs(media_path, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+        # Save media
+        img_filename = f"{message['sensor_id']}_{timestamp}.jpg"
+        vid_filename = f"{message['sensor_id']}_{timestamp}.mp4"
+
+        with open(os.path.join(media_path, img_filename), "wb") as f:
+            f.write(message["org_img"])
+        with open(os.path.join(media_path, vid_filename), "wb") as f:
+            f.write(message["video"])
+
+        # Public URLs (served by Nginx)
+        img_url = f"http://{media_host}/media/{img_filename}"
+        vid_url = f"http://{media_host}/media/{vid_filename}"
+
+        payload = {
+            "sensor_id": message["sensor_id"],
+            "org_img": img_url,
+            "video_url": vid_url,
+            "datetimestamp_trackerid": message["datetimestamp"],
+            "imgsz": message["imgsz"],
+            "absolute_bbox": [message["absolute_bbox"]],
+            "color": message["color"],
+        }
+
+        try:
+            r = requests.post(f"http://{api_host}/api/events", json=payload, timeout=10)
+            r.raise_for_status()
+            print("✅ Event sent:", r.json())
+        except Exception as e:
+            print(f"❌ Failed to send event: {e}")
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
