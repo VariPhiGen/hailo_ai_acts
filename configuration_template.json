@@ -10,10 +10,12 @@
   },
   "available_activities": [
     "traffic_overspeeding_distancewise",
-    "TimeBasedUnauthorizedAccess"
+    "TimeBasedUnauthorizedAccess",
+    "UnsafeZoneWR",
+    "UnsafeZoneN"
   ],
   "active_activities": [
-    "traffic_overspeeding_distancewise","TimeBasedUnauthorizedAccess"
+    "UnsafeZoneWR"
   ],
   "radar_config": {
       "port": "/dev/ttyACMr",
@@ -69,7 +71,8 @@
           "days": ["Monday", "Wednesday", "Friday"]}],
         "timezone":"Asia/Tokyo",
         "last_check_time":0,
-        "API":0
+        "API":0,
+        "kafka":1
   }
 },
 "UnsafeZoneWR":{
@@ -80,6 +83,20 @@
   "parameters":{
       "subcategory_mapping":["person"],
       "switch_relay":[1,2],
+      "frame_accuracy": 2,
+    "timezone":"Asia/Tokyo",
+    "last_check_time":0,
+    "API":1,
+    "kafka":0
+}
+},
+"UnsafeZoneN":{
+  "zones":{
+      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
+
+  },
+  "parameters":{
+      "subcategory_mapping":["person"],
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
     "last_check_time":0,

@@ -458,7 +458,7 @@ class KafkaHandler:
 
                 messages_processed = 0
                 for queue_obj, topic in queues_and_topics:
-                    if self.process_events_queue(queue_obj, topic,api_m,kafka_m):
+                    if self.process_events_queue(queue_obj,topic,api_m,kafka_m):
                         messages_processed += 1
 
                 if messages_processed == 0:
