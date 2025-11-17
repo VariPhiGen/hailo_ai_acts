@@ -15,6 +15,8 @@ echo "🚀 Starting Raspberry Pi 5 Hailo System Preparation..."
 echo "📦 Updating system packages..."
 sudo apt update
 sudo apt upgrade -y
+sudo apt install -y jq
+
 
 # =============================================================================
 # 2. Install Essential Dependencies

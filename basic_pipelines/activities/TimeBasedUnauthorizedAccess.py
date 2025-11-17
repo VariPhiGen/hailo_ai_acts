@@ -18,6 +18,16 @@ class TimeBasedUnauthorizedAccess:
             self.running_data[zone_name]={}
         self.violation_id_data = []
         
+        #Initialize Relay
+        if parameters["relay"]==1:
+            try:
+                if self.parent.relay_handler.device==None:
+                    self.parent.relay_handler.initiate_relay()
+                self.relay=self.parent.relay_handler
+                self.switch_relay=parameters["switch_relay"]
+            except Exception:
+                self.relay = None
+
         self.last_check_time = self.parameters.get("last_check_time", 0)
         self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
         # Set up the timezone from the provided string
@@ -65,17 +75,25 @@ class TimeBasedUnauthorizedAccess:
                             tracker_id=self.parent.tracker_ids[idx]
                             anchor = self.parent.anchor_points_original[idx]
                             for zone_name, zone_polygon in self.zone_data.items():
-                                if tracker_id not in self.violation_id_data  and is_bottom_in_zone(anchor, zone_polygon):
+                                if  is_bottom_in_zone(anchor, zone_polygon) and (tracker_id not in self.violation_id_data or self.parameters["relay"]==1):
                                     if tracker_id not in self.running_data[zone_name]:
                                         self.running_data[zone_name][tracker_id] = 1
                                     else:
                                         self.running_data[zone_name][tracker_id]+= 1
 
                                     if self.running_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
-                                        self.violation_id_data.append(tracker_id)
-                                        xywh=xywh_original_percentage(box)
-                                        datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
-                                        self.parent.create_result_events(xywh,obj_class,f"Security-Unauthorized Access",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
+                                        if self.relay!=None and self.parameters["relay"]==1:
+                                            status=self.relay.state(0)
+                                            true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
+                                            for index in self.switch_relay:
+                                                if (index) not in true_indexes:
+                                                    self.relay.state(index, on=True)
+                                                self.relay.start_time[index]=time.time()
+                                        if tracker_id not in self.violation_id_data:
+                                            self.violation_id_data.append(tracker_id)
+                                            xywh=xywh_original_percentage(box)
+                                            datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
+                                            self.parent.create_result_events(xywh,obj_class,f"Security-Unauthorized Access",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
 
         #print("Yes Running Successfully", self.zone_data,self.parameters)
 

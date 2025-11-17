@@ -5,19 +5,29 @@ from activities.activity_helper_utils import (
     is_bottom_in_zone,xywh_original_percentage
 )
 
-class UnsafeZoneN:
+class UnsafeZone:
     def __init__(self, parent,zone_data,parameters):
         """
         parent: reference to user_app_callback_class (for detections, events, etc.)
         """
         self.parent=parent
+        self.relay=None
 
         self.parameters = parameters
         self.zone_data = zone_data
         self.running_data = {}
+
+        #Initialize Relay
+        if parameters["relay"]==1:
+            try:
+                if self.parent.relay_handler.device==None:
+                    self.parent.relay_handler.initiate_relay()
+                self.relay=self.parent.relay_handler
+                self.switch_relay=parameters["switch_relay"]
+            except Exception:
+                self.relay = None
         # Initiating Zone wise
         for zone_name in zone_data.keys():
-        
             self.running_data[zone_name]={}
         self.violation_id_data = []
         
@@ -35,6 +45,7 @@ class UnsafeZoneN:
         #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
+            self.relay.check_auto_off(self.switch_relay)
             
             offender_indices = [i for i, cls in enumerate(self.parent.classes) if cls in self.parameters["subcategory_mapping"]]
             print(offender_indices, self.running_data)
@@ -45,13 +56,20 @@ class UnsafeZoneN:
                 tracker_id=self.parent.tracker_ids[idx]
                 anchor = self.parent.anchor_points_original[idx]
                 for zone_name, zone_polygon in self.zone_data.items():
-                    if is_bottom_in_zone(anchor, zone_polygon):
+                    if is_bottom_in_zone(anchor, zone_polygon) and (tracker_id not in self.violation_id_data or self.parameters["relay"]==1):
                         if tracker_id not in self.running_data[zone_name]:
                             self.running_data[zone_name][tracker_id] = 1
                         else:
                             self.running_data[zone_name][tracker_id]+= 1
 
                         if self.running_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
+                            if self.relay!=None and self.parameters["relay"]==1:
+                                status=self.relay.state(0)
+                                true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
+                                for index in self.switch_relay:
+                                    if (index) not in true_indexes:
+                                        self.relay.state(index, on=True)
+                                    self.relay.start_time[index]=time.time()
                             if tracker_id not in self.violation_id_data:
                                 self.violation_id_data.append(tracker_id)
                                 xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)

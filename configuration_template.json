@@ -66,6 +66,8 @@
       "parameters":{
           "subcategory_mapping":["person"],
           "frame_accuracy": 2,
+          "relay":1,
+      "switch_relay":[1,2],
         "scheduled_time": [{
           "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
           "days": ["Monday", "Wednesday", "Friday"]}],
@@ -75,13 +77,14 @@
         "kafka":1
   }
 },
-"UnsafeZoneWR":{
+"UnsafeZone":{
   "zones":{
       "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
 
   },
   "parameters":{
       "subcategory_mapping":["person"],
+      "relay":1,
       "switch_relay":[1,2],
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
@@ -90,16 +93,18 @@
     "kafka":0
 }
 },
-"UnsafeZoneN":{
+"PPE":{
   "zones":{
       "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
 
   },
   "parameters":{
-      "subcategory_mapping":["person"],
+      "subcategory_mapping":{"head":"No Helmet"},
+      "switch_relay":[1,2],
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
     "last_check_time":0,
+    "relay":1,
     "API":1,
     "kafka":0
 }

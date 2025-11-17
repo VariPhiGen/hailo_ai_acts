@@ -21,6 +21,17 @@ def is_bottom_in_zone(anchor_point: Tuple[float, float], zone_polygon: Polygon) 
     bottom_point = Point(xb_center, y_center)
     return zone_polygon.contains(bottom_point)
 
+def is_object_in_zone(self, object_coordinates, zone_polygon):
+        """
+        Check if the center of the person's bounding box is inside a zone.
+        person_coordinates: [xmin, ymin, xmax, ymax]
+        zone_polygon: shapely Polygon object for the zone
+        """
+        x_center = (object_coordinates[0] + object_coordinates[2]) / 2
+        y_center = (object_coordinates[1] + object_coordinates[3]) / 2
+        object_center = Point(x_center, y_center)
+        return zone_polygon.contains(object_center)
+
 def xywh_original_percentage(box: List[float], original_width: int, original_height: int) -> List[float]:
     """
     Convert bounding box coordinates to percentage of original image dimensions.

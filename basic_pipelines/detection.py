@@ -66,6 +66,7 @@ class user_app_callback_class(app_callback_class):
         self.parameters_data = None
         
         # Image Variables
+        self.model_image=None
         self.image = None
         self.original_height = None
         self.original_width = None
@@ -449,6 +450,7 @@ def app_callback(pad, info, user_data,frame_type):
             user_data.time_stamp.append(ts)
             # Get video frame
             frame = get_numpy_from_buffer(buffer, format, width, height)
+            user_data.model_image=frame
             if user_data.recorder is not None:
                 user_data.recorder.add_frame(frame)
             
