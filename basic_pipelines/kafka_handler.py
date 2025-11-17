@@ -16,6 +16,9 @@ from boto3.s3.transfer import TransferConfig
 from botocore.client import Config
 from video_clipper import VideoClipRecorder
 from api_utils import load_api_template, call_api
+import cv2
+import numpy as np
+from form_util import fill_form
 
 # S3 Transfer configuration
 S3_TRANSFER_CONFIG = TransferConfig(
@@ -23,6 +26,14 @@ S3_TRANSFER_CONFIG = TransferConfig(
     multipart_chunksize=5 * 1024 * 1024,
     max_concurrency=4
 )
+minio_client=boto3.client(
+                    "s3",
+                    aws_access_key_id="root",
+                    endpoint_url="http://localhost:9000",
+                    config=Config(signature_version="s3v4"),
+                    aws_secret_access_key="root@2025",
+                    region_name="ap-south-1"
+                )
 
 class KafkaHandler:
     """Resilient Kafka + S3 handler with continuous operation and async uploads."""
@@ -363,6 +374,74 @@ class KafkaHandler:
                 self.last_flush_time = time.time()
                 self.messages_since_flush = 0
 
+    def upload_to_minio( image_bytes, retries=3, delay=2):
+        global s3_client,minio_client
+        unique_filename = f"{uuid.uuid4()}.jpg"
+        for attempt in range(retries):
+            try:
+                minio_client.put_object(
+                                Bucket="arrestominio",
+                                Key=unique_filename,
+                                Body=image_bytes,
+                                ContentType='image/jpg'
+                            )
+                minio_url = f"http://localhost:9000/arrestominio/{unique_filename}"
+                print(f"DEBUG: Successfully uploaded Image to {minio_url}")
+                return f"{unique_filename}"
+            except Exception as e:
+                print(f"S3 upload failed, attempt {attempt + 1}/{retries}: {str(e)}")
+                time.sleep(delay)
+        
+        return None
+    
+    def make_labelled_image(message):
+        # Decode bytes → numpy image
+        nparr = np.frombuffer(message["org_img"], np.uint8)
+        org_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if org_img is None:
+            raise ValueError("Could not decode org_img from bytes")
+
+        # Parse image size (W:H)
+        width, height = map(int, message["imgsz"].split(":"))
+        #print(width,height)
+
+        # Draw all bounding boxes
+        for bbox in message["absolute_bbox"]:
+            x_pct, y_pct, w_pct, h_pct = map(float, bbox["xywh"])
+            
+            #print(bbox["xywh"])
+
+            # Convert percentages to pixel values
+            x_center = int(x_pct * width/100)
+            y_center = int(y_pct * height/100)
+            w = int(w_pct * width/100)
+            h = int(h_pct * height/100)
+
+            # Convert (x,y,w,h) center format → top-left and bottom-right
+            x1 = int(x_center)
+            y1 = int(y_center)
+            x2 = int(x_center + w)
+            y2 = int(y_center + h)
+            #print(x1,y1,x2,y2,"These are cordinate")
+
+            # Convert HEX color → BGR
+            color_hex = message["color"].lstrip("#")
+            bgr = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
+
+            # Draw bbox
+            cv2.rectangle(org_img, (x1, y1), (x2, y2), bgr, 2)
+
+            # Label text
+            label = f"{bbox['class_name']} {bbox['confidence']:.2f}"
+            cv2.putText(org_img, label, (x1, max(0, y1-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr, 2, cv2.LINE_AA)
+
+        # Encode back to bytes (JPEG)
+        success, buffer = cv2.imencode(".jpg", org_img)
+        if not success:
+            raise ValueError("Could not encode labelled image")
+        print( " Success Fully Labelled")
+        return buffer.tobytes()
     # ------------------------- Queue processing -------------------------
     def process_events_queue(self, events_queue: queue.Queue, topic: str,api_m,kafka_m) -> bool:
         try:
@@ -375,29 +454,60 @@ class KafkaHandler:
             video_bytes = message.get("video")
 
             uploads = {}
-            futures = {
-                self.executor.submit(self.upload_to_s3_safe, image_bytes, "image"): "org_img",
-                self.executor.submit(self.upload_to_s3_safe, snap_shot_bytes, "snapshot"): "snap_shot",
-                self.executor.submit(self.upload_to_s3_safe, video_bytes, "video"): "video"
-            }
+            # futures = {
+            #     self.executor.submit(self.upload_to_s3_safe, image_bytes, "image"): "org_img",
+            #     self.executor.submit(self.upload_to_s3_safe, snap_shot_bytes, "snapshot"): "snap_shot",
+            #     self.executor.submit(self.upload_to_s3_safe, video_bytes, "video"): "video"
+            # }
 
-            for fut in as_completed(futures):
-                key = futures[fut]
-                try:
-                    uploads[key] = fut.result()
-                except Exception as e:
-                    print(f"DEBUG: Upload task failed for {key}: {e}")
-                    uploads[key] = None
+            # for fut in as_completed(futures):
+            #     key = futures[fut]
+            #     try:
+            #         uploads[key] = fut.result()
+            #     except Exception as e:
+            #         print(f"DEBUG: Upload task failed for {key}: {e}")
+            #         uploads[key] = None
 
-            message["org_img"] = uploads.get("org_img")
-            message["snap_shot"] = uploads.get("snap_shot")
-            message["video"] = uploads.get("video")
-
+            # message["org_img"] = uploads.get("org_img")
+            # message["snap_shot"] = uploads.get("snap_shot")
+            # message["video"] = uploads.get("video")
+            labelled_image_bytes = self.make_labelled_image(message)
+            image_s3_url = self.upload_to_minio(image_bytes)
+            labelled_image_s3_url = self.upload_to_minio(labelled_image_bytes)
+            # Send message with timeout
+            # Extract category and subcategory from "Category-Subcategory"
+            subcategory_full = message["absolute_bbox"][0]["subcategory"]
+            parts = subcategory_full.split("-", 1)
+            event_category = parts[0] if len(parts) > 0 else subcategory_full
+            event_subcategory = parts[1] if len(parts) > 1 else ""
+            if labelled_image_s3_url:
+                message["org_img"] = image_s3_url
+                
             if message["org_img"] is not None:
                 if api_m:                    
                     try:
                         # Option 1: With API key
-                        response = call_api(self.api_template, "upload_data", message)
+                        #response = call_api(self.api_template, "upload_data", message)
+                        response = fill_form(
+                                            'template.json',
+                                            {
+                                                "id": "7f148215-d1c5-4b83-bf58-3a2249d4b107",  
+                                                "timestamp": message["datetimestamp"],
+                                                "image_original": f"http://localhost:9000/arrestominio/{image_s3_url}",
+                                                "image_labelled": f"http://localhost:9000/arrestominio/{labelled_image_s3_url}", 
+                                                "video_clip": "",       
+                                                "remarks": "Violation Detected",
+                                                "event_category": event_category,
+                                                "whom_to_notify": "mohammed@arresto.in", 
+                                                "camera_unique_id": "3acbb55c-d6cb-4470-8d9c-5d8de5223bea",
+                                                "safety_captain_id": "varun@arresto.in",
+                                                "incident_occured_on": message["datetimestamp_trackerid"],
+                                                "incident_updated_on": message["datetimestamp_trackerid"],
+                                                "action_status": "Pending",
+                                                "event_subcategory": event_subcategory
+                                            }
+                                        )
+                        print(f"Successfully sent message to {topic},{response}")
                     except Exception as e:
                         print(f"DEBUG Call Failed: {e}")
                 

@@ -26,7 +26,6 @@ def extract_required_data(endpoint_config: Dict[str, Any], data: Dict[str, Any])
         if data_field not in data:
             raise KeyError(f"Missing required field '{data_field}' in input data.")
         extracted[api_field] = data[data_field]
-
     return extracted
 
 
@@ -58,7 +57,7 @@ def call_api(
     base_url = api_template["base_url"]
     endpoint_config = get_endpoint_config(api_template, endpoint_name)
 
-    payload = extract_required_data(endpoint_config, data)
+    extracted_feilds = extract_required_data(endpoint_config, data)
     headers = prepare_headers(endpoint_config, api_key)
     url = base_url + endpoint_config["path"]
     method = endpoint_config.get("method", "POST").upper()

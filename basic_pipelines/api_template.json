@@ -1,13 +1,27 @@
 {
-    "base_url": "https://example.com/api/v1",
+    "base_url": "http://localhost:80/api/client/1825/mfb/forms_data",
     "endpoints": {
       "upload_data": {
-        "path": "/upload",
+        "path": "",
         "method": "POST",
         "required_fields": {
-          "timestamp": "timestamp_data",
-          "camera_id": "camera_id",
-          "image": "image_base64"
+          "id": "7f148215-d1c5-4b83-bf58-3a2249d4b107",  
+          "timestamp": message["datetimestamp_trackerid"],
+          "image_original": f"http://localhost:9000/arrestominio/{image_s3_url}",
+          "image_labelled": f"http://localhost:9000/arrestominio/{labelled_image_s3_url}", 
+          "video_clip": "",       
+          "remarks": "Violation Detected",
+          "event_category": event_category,
+          "whom_to_notify": "mohammed@arresto.in", 
+          "camera_unique_id": "3acbb55c-d6cb-4470-8d9c-5d8de5223bea",
+          "safety_captain_id": "varun@arresto.in",
+          "incident_occured_on": message["datetimestamp_trackerid"],
+          "incident_updated_on": message["datetimestamp_trackerid"],
+          "action_status": "Pending",
+          "event_subcategory": event_subcategory
+        },
+        "fixed_required_field":{
+
         },
         "headers": {
           "Content-Type": "application/json",

@@ -108,6 +108,24 @@
     "API":1,
     "kafka":0
 }
+},
+"CameraTampering":{
+  "zones":{
+      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
+
+  },
+  "parameters":{
+      "frame_accuracy": 2,
+		 "alert_interval": 30,
+      "motion_thres":0.65,
+      "brightness_thres":60,
+      "relay":1,
+      "switch_relay":[1,2],
+    "timezone":"Asia/Kolkata",
+    "last_check_time":0,
+    "API":1,
+    "kafka":0
+}
 }
   },
   "save_settings": {
