@@ -165,7 +165,7 @@ class user_app_callback_class(app_callback_class):
         asyncio.set_event_loop(self.main_loop)
         self.main_loop.run_forever()
         
-    async def trigger_snapshot_loop(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, anprimage=None):
+    async def trigger_snapshot_loop(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, image=None,anpr_status=None):
         # Use existing main_loop instead of creating new one
         try:
             suffix = f"{class_name}_{subcategory}"
@@ -202,20 +202,20 @@ class user_app_callback_class(app_callback_class):
                 print(f"DEBUG: Video generation error: {e}")
             
         # Lightweight image processing (immediate)
-        image, height, width, anpr_status = self._process_image_lightweight(anprimage)
+        final_image, height, width, anpr_status = self._process_image_lightweight(image,anpr_status)
 
         
         # Fire-and-forget RTSP save
         if hasattr(self, 'save_rtsp_images') and self.save_rtsp_images and self.recorder is not None:
-            asyncio.create_task(self._async_save_rtsp(anprimage, suffix))
+            asyncio.create_task(self._async_save_rtsp(image, suffix))
         
         # Create message with complete data
         message = {
             "sensor_id": self.sensor_id,
-            "org_img": image,
+            "org_img": final_image,
             "snap_shot": cgi_snapshot,
             "video": video_bytes,  # Video bytes ready before queuing
-            "absolute_bbox": {"xywh": xywh,"subcategory":subcategory, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status},
+            "absolute_bbox": [{"xywh": xywh,"subcategory":subcategory, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status}],
             "datetimestamp": datetimestamp,
             "imgsz": f"{width}:{height}",
             "color": "#FFFF00"
@@ -237,18 +237,18 @@ class user_app_callback_class(app_callback_class):
     
 
     
-    def _process_image_lightweight(self, anprimage):
+    def _process_image_lightweight(self, image,anpr_status):
         """Lightweight image processing without heavy operations."""
         try:
-            if anprimage is not None:
+            if anpr_status is not None:
                 # Minimal processing - just get dimensions
-                anprimage_rgb = cv2.cvtColor(anprimage, cv2.COLOR_BGR2RGB)
+                anprimage_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 image = encode_frame_to_bytes(anprimage_rgb, 100)
-                height, width = anprimage.shape[:2]
+                height, width = image.shape[:2]
                 anpr_status = "True"
             else:
-                image_rgb = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
-                height, width = self.image.shape[:2]
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                height, width = image.shape[:2]
                 image = encode_frame_to_bytes(image_rgb, 90)  # Lower quality for speed
                 anpr_status = "False"
             return image, height, width, anpr_status
@@ -256,10 +256,10 @@ class user_app_callback_class(app_callback_class):
             print(f"DEBUG: Error in image processing: {e}")
 
     
-    async def _async_save_rtsp(self, anprimage, suffix):
+    async def _async_save_rtsp(self, image, suffix):
         """Fire-and-forget RTSP image save."""
         try:
-            img_for_rtsp = cv2.cvtColor(anprimage, cv2.COLOR_BGR2RGB) if anprimage is not None else self.image
+            img_for_rtsp = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if image is not None else self.image
             await self.main_loop.run_in_executor(
                 self.thread_pool,
                 self.recorder.save_images,
@@ -301,7 +301,6 @@ class user_app_callback_class(app_callback_class):
             except Exception as e:
                 print(f"❌ Failed to replace message: {e}")
                 # Silently drop if all else fails
-    
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
@@ -323,8 +322,8 @@ class user_app_callback_class(app_callback_class):
             # Handle gracefully without blocking
             pass
 
-    def create_result_events(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, anprimage=None):
-        asyncio.run_coroutine_threadsafe(self.trigger_snapshot_loop(xywh, class_name,subcategory, parameters, datetimestamp, confidence, anprimage), self.main_loop)
+    def create_result_events(self, xywh, class_name,subcategory, parameters, datetimestamp, confidence=1, image=None,anpr_status=None):
+        asyncio.run_coroutine_threadsafe(self.trigger_snapshot_loop(xywh, class_name,subcategory, parameters, datetimestamp, confidence,image,anpr_status), self.main_loop)
 
     def cleaning_events_data_with_last_frames(self):
         # Cleaning Violations
@@ -399,7 +398,7 @@ class user_app_callback_class(app_callback_class):
                 anprimage = crop_image_numpy(self.image, result["box"])
                 xywh = [0, 0, 100, 100]
                 datetimestamp = f"{datetime.now(self.ist_timezone).isoformat()}"
-                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["radar_speed"],"tag":"RDR"}, datetimestamp, 1, anprimage)
+                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["radar_speed"],"tag":"RDR"}, datetimestamp, 1,anprimage,True)
             
             elif 55 > result["speed"] > (self.parameters_data["traffic_overspeeding_distancewise"]["speed_limit"][result["obj_class"]])+5 and result["radar_speed"] is None:
                 # Get the bounding rectangle of the polygon
@@ -407,7 +406,7 @@ class user_app_callback_class(app_callback_class):
                 anprimage = crop_image_numpy(self.image, result["box"])
                 xywh = [0, 0, 100, 100]
                 datetimestamp = f"{datetime.now(self.ist_timezone).isoformat()}"
-                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["speed"],"tag":"AI"}, datetimestamp, 1, anprimage)
+                self.create_result_events(xywh, obj_class,"Traffic Ssafety-Overspeeding", {"speed": result["speed"],"tag":"AI"}, datetimestamp, 1, anprimage,True)
 # -----------------------------------------------------------------------------------------------
 # User-defined callback function
 # -----------------------------------------------------------------------------------------------
@@ -616,6 +615,28 @@ if __name__ == "__main__":
         s3["secondary"]["org_img_fn"] = os.getenv("AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
         s3["secondary"]["video_fn"] = os.getenv("AWS_SECONDARY_VIDEO_FN", "videoclips/")
         s3["secondary"]["cgi_fn"] = os.getenv("AWS_SECONDARY_CGI_FN", "cgisnapshots/")
+
+    if os.getenv("API_AWS_PRIMARY_KEY") and os.getenv("API_AWS_PRIMARY_SECRET"):
+        s3.setdefault("api_primary", {})
+        s3["api_primary"]["aws_access_key_id"] = os.getenv("API_AWS_PRIMARY_KEY")
+        s3["api_primary"]["aws_secret_access_key"] = os.getenv("API_AWS_PRIMARY_SECRET")
+        s3["api_primary"]["end_point_url"] = os.getenv("API_AWS_PRIMARY_ENDPOINT")
+        s3["api_primary"]["region_name"] = os.getenv("API_AWS_PRIMARY_REGION", "ap-south-1")
+        s3["api_primary"]["BUCKET_NAME"] = os.getenv("API_AWS_PRIMARY_BUCKET_NAME", "arrestovideos")
+        s3["api_primary"]["org_img_fn"] = os.getenv("API_AWS_PRIMARY_ORG_IMG_FN", "violationoriginalimages/")
+        s3["api_primary"]["video_fn"] = os.getenv("API_AWS_PRIMARY_VIDEO_FN", "videoclips/")
+        s3["api_primary"]["cgi_fn"] = os.getenv("API_AWS_PRIMARY_CGI_FN", "cgisnapshots/")
+
+    if os.getenv("API_AWS_SECONDARY_KEY") and os.getenv("API_AWS_SECONDARY_SECRET"):
+        s3.setdefault("api_secondary", {})
+        s3["api_secondary"]["aws_access_key_id"] = os.getenv("API_AWS_SECONDARY_KEY")
+        s3["api_secondary"]["aws_secret_access_key"] = os.getenv("API_AWS_SECONDARY_SECRET")
+        s3["api_secondary"]["end_point_url"] = os.getenv("API_AWS_SECONDARY_ENDPOINT")
+        s3["api_secondary"]["region_name"] = os.getenv("API_AWS_SECONDARY_REGION", "ap-south-1")
+        s3["api_secondary"]["BUCKET_NAME"] = os.getenv("API_AWS_SECONDARY_BUCKET_NAME", "arrestovideos")
+        s3["api_secondary"]["org_img_fn"] = os.getenv("API_AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
+        s3["api_secondary"]["video_fn"] = os.getenv("API_AWS_SECONDARY_VIDEO_FN", "videoclips/")
+        s3["api_secondary"]["cgi_fn"] = os.getenv("API_AWS_SECONDARY_CGI_FN", "cgisnapshots/")
     
     s3["s3_failover_timeout"]= int(os.getenv("S3_FAILOVER_TIMEOUT", 30)),
     s3["upload_retries"]= int(os.getenv("S3_UPLOAD_RETRIES", 3))

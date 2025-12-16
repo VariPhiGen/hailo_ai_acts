@@ -15,10 +15,9 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.client import Config
 from video_clipper import VideoClipRecorder
-from api_utils import load_api_template, call_api
 import cv2
 import numpy as np
-from form_util import fill_form
+from api_handler import APIHandler
 
 # S3 Transfer configuration
 S3_TRANSFER_CONFIG = TransferConfig(
@@ -26,15 +25,6 @@ S3_TRANSFER_CONFIG = TransferConfig(
     multipart_chunksize=5 * 1024 * 1024,
     max_concurrency=4
 )
-minio_client=boto3.client(
-                    "s3",
-                    aws_access_key_id="root",
-                    endpoint_url="http://localhost:9000",
-                    config=Config(signature_version="s3v4"),
-                    aws_secret_access_key="root@2025",
-                    region_name="ap-south-1"
-                )
-
 class KafkaHandler:
     """Resilient Kafka + S3 handler with continuous operation and async uploads."""
 
@@ -42,6 +32,7 @@ class KafkaHandler:
         self.config = config
         self.kafka_pipeline: Optional[KafkaProducer] = None
         self.s3_clients: Dict[str, Any] = {}
+        self.api_s3_clients: Dict[str, Any] = {}
         self.recorder: Optional[VideoClipRecorder] = None
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._stop_event = threading.Event()
@@ -58,24 +49,33 @@ class KafkaHandler:
         self.current_broker_index = 0
         self.broker_health = {b: True for b in self.brokers}
 
-        # S3 configs
+        # S3 configs - separate normal and API configs
         self.s3_configs = self._get_s3_configs()
+        self.api_s3_configs = self._get_api_s3_configs()
         self.current_s3_index = 0
+        self.current_api_s3_index = 0
         self.s3_health = {name: True for name in self.s3_configs.keys()}
+        self.api_s3_health = {name: True for name in self.api_s3_configs.keys()}
 
         # Health check
         self.health_check_interval = int(self.config.get("kafka_variables", {}).get("health_check_interval", 15))
         self._health_thread = None
 
         #API Integration
-        # Load template
-        self.api_template = None
 
         # Setup AWS S3 and Video Recorder
         self._setup_aws_s3()
         self._setup_video_recorder()
         self._start_health_monitor()
         self._setup_signal_handlers()
+        
+        # Initialize API Handler (after setup is complete)
+        self.api_handler = APIHandler(
+            executor=self.executor,
+            upload_to_s3_safe=self.upload_to_s3_safe,
+            get_api_s3_url=self._get_api_s3_url,
+            config=self.config
+        )
 
     # ------------------------- Setup helpers -------------------------
     def _get_broker_list(self) -> List[str]:
@@ -93,17 +93,27 @@ class KafkaHandler:
         return brokers if brokers else ["localhost:9092"]
 
     def _get_s3_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Get normal S3 configs (primary, secondary) for Kafka uploads"""
         aws_config = self.config.get("kafka_variables", {}).get("AWS_S3", {})
         s3_configs: Dict[str, Dict[str, Any]] = {}
         if "primary" in aws_config:
             s3_configs["primary"] = aws_config["primary"]
         if "secondary" in aws_config:
             s3_configs["secondary"] = aws_config["secondary"]
-        if not s3_configs and "BUCKET_NAME" in aws_config:
-            s3_configs["primary"] = aws_config
         return s3_configs
 
+    def _get_api_s3_configs(self) -> Dict[str, Dict[str, Any]]:
+        """Get API S3 configs (api_primary, api_secondary) for API uploads"""
+        aws_config = self.config.get("kafka_variables", {}).get("AWS_S3", {})
+        api_s3_configs: Dict[str, Dict[str, Any]] = {}
+        if "api_primary" in aws_config:
+            api_s3_configs["api_primary"] = aws_config["api_primary"]
+        if "api_secondary" in aws_config:
+            api_s3_configs["api_secondary"] = aws_config["api_secondary"]
+        return api_s3_configs
+
     def _setup_aws_s3(self):
+        # Setup normal S3 clients
         for name, config in self.s3_configs.items():
             try:
                 client = boto3.client(
@@ -119,6 +129,23 @@ class KafkaHandler:
             except Exception as e:
                 print(f"DEBUG: Failed to init S3 client {name}: {e}")
                 self.s3_health[name] = False
+        
+        # Setup API S3 clients
+        for name, config in self.api_s3_configs.items():
+            try:
+                client = boto3.client(
+                    "s3",
+                    aws_access_key_id=config.get("aws_access_key_id"),
+                    aws_secret_access_key=config.get("aws_secret_access_key"),
+                    region_name=config.get("region_name"),
+                    endpoint_url=f"{config.get('end_point_url')}" if config.get("end_point_url") else None,
+                    config=Config(signature_version="s3v4")
+                )
+                self.api_s3_clients[name] = client
+                print(f"DEBUG: Initialized API S3 client for {name}: {config.get('BUCKET_NAME')}")
+            except Exception as e:
+                print(f"DEBUG: Failed to init API S3 client {name}: {e}")
+                self.api_s3_health[name] = False
 
     def _setup_video_recorder(self):
         try:
@@ -149,6 +176,17 @@ class KafkaHandler:
         except Exception:
             return False
 
+    def _test_api_s3_connectivity(self, s3_name: str) -> bool:
+        try:
+            client = self.api_s3_clients.get(s3_name)
+            if not client:
+                return False
+            bucket_name = self.api_s3_configs[s3_name].get("BUCKET_NAME")
+            client.list_objects_v2(Bucket=bucket_name, MaxKeys=1)
+            return True
+        except Exception:
+            return False
+
     def _test_broker_connectivity(self, broker: str) -> bool:
         try:
             test_producer = KafkaProducer(bootstrap_servers=str(broker), request_timeout_ms=3000, max_block_ms=2000)
@@ -174,6 +212,13 @@ class KafkaHandler:
                             self.s3_health[s3_name] = healthy
                             if healthy:
                                 print(f"DEBUG: S3 recovered: {s3_name}")
+                    
+                    for s3_name in self.api_s3_configs.keys():
+                        if not self.api_s3_health.get(s3_name, False):
+                            healthy = self._test_api_s3_connectivity(s3_name)
+                            self.api_s3_health[s3_name] = healthy
+                            if healthy:
+                                print(f"DEBUG: API S3 recovered: {s3_name}")
                 except Exception as e:
                     print(f"DEBUG: Health monitor error: {e}")
                 time.sleep(self.health_check_interval)
@@ -246,33 +291,58 @@ class KafkaHandler:
         self.kafka_pipeline = self._create_kafka_producer()
 
     # ------------------------- S3 upload helpers -------------------------
-    def _get_next_healthy_s3(self) -> Optional[str]:
-        healthy = [name for name, ok in self.s3_health.items() if ok]
-        if not healthy:
-            return None
-        name = healthy[self.current_s3_index % len(healthy)]
-        self.current_s3_index += 1
+    def _get_next_healthy_s3(self, is_api: bool = False) -> Optional[str]:
+        """Get next healthy S3 config name. If is_api=True, returns API S3 configs only."""
+        if is_api:
+            healthy = [name for name, ok in self.api_s3_health.items() if ok]
+            if not healthy:
+                return None
+            name = healthy[self.current_api_s3_index % len(healthy)]
+            self.current_api_s3_index += 1
+        else:
+            healthy = [name for name, ok in self.s3_health.items() if ok]
+            if not healthy:
+                return None
+            name = healthy[self.current_s3_index % len(healthy)]
+            self.current_s3_index += 1
         return name
 
-    def upload_to_s3(self, file_bytes: bytes, file_type: str = "image") -> Optional[str]:
-        """Upload file to S3 with retries and failover"""
+    def upload_to_s3(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[str]:
+        """Upload file to S3 with retries and failover.
+        
+        Args:
+            file_bytes: The file data to upload
+            file_type: Type of file ("image", "video", "snapshot")
+            is_api: If True, uses API S3 configs (api_primary, api_secondary), 
+                   otherwise uses normal S3 configs (primary, secondary)
+        """
         if not file_bytes:
             return None
 
         upload_retries = int(self.config.get("kafka_variables", {}).get("AWS_S3", {}).get("upload_retries", 3))
         tried = set()
 
+        # Select appropriate configs and clients based on is_api flag
+        if is_api:
+            s3_configs = self.api_s3_configs
+            s3_clients = self.api_s3_clients
+            s3_health = self.api_s3_health
+        else:
+            s3_configs = self.s3_configs
+            s3_clients = self.s3_clients
+            s3_health = self.s3_health
+
         # Try healthy S3 buckets first
-        for _ in range(max(1, len(self.s3_configs))):
-            s3_name = self._get_next_healthy_s3()
+        for _ in range(max(1, len(s3_configs))):
+            s3_name = self._get_next_healthy_s3(is_api=is_api)
             if not s3_name or s3_name in tried:
                 break
             tried.add(s3_name)
             
-            client = self.s3_clients.get(s3_name)
-            config = self.s3_configs.get(s3_name)
+            client = s3_clients.get(s3_name)
+            config = s3_configs.get(s3_name)
             if not client or not config:
-                self.s3_health[s3_name] = False
+                s3_health[s3_name] = False
                 continue
 
             unique_filename = (f"clips{uuid.uuid4()}.mp4" if file_type == "video" else f"{uuid.uuid4()}.jpg")
@@ -305,13 +375,13 @@ class KafkaHandler:
                     time.sleep(0.5 * (attempt + 1))
             
             # Mark as unhealthy after retries
-            self.s3_health[s3_name] = False
+            s3_health[s3_name] = False
 
-        # Last-ditch attempt with any S3 bucket
-        for name, config in self.s3_configs.items():
+        # Last-ditch attempt with any S3 bucket of the same type
+        for name, config in s3_configs.items():
             if name in tried:
                 continue
-            client = self.s3_clients.get(name)
+            client = s3_clients.get(name)
             try:
                 unique_filename = (f"clips{uuid.uuid4()}.mp4" if file_type == "video" else f"{uuid.uuid4()}.jpg")
                 content_type = ("video/mp4" if file_type == "video" else "image/jpg")
@@ -340,14 +410,35 @@ class KafkaHandler:
 
         return None
 
-    def upload_to_s3_safe(self, file_bytes: bytes, file_type: str = "image") -> Optional[str]:
+    def upload_to_s3_safe(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[str]:
         """Non-blocking S3 upload with retries."""
         try:
             if file_bytes:
-                return self.upload_to_s3(file_bytes, file_type)
+                return self.upload_to_s3(file_bytes, file_type, is_api=is_api)
         except Exception as e:
             print(f"DEBUG: S3 upload failed for {file_type}: {e}")
         return None
+
+    def _get_api_s3_url(self, filename: str, file_type: str = "image") -> Optional[str]:
+        """Construct full URL for an uploaded file using API S3 configs."""
+        if not filename or not self.api_s3_configs:
+            return None
+        # Use the first available API S3 config
+        config_name = next(iter(self.api_s3_configs.keys()), None)
+        if not config_name:
+            return None
+        config = self.api_s3_configs[config_name]
+        end_point = config.get('end_point_url', '')
+        bucket = config.get('BUCKET_NAME', '')
+        
+        if file_type == "video":
+            key_prefix = config.get('video_fn', '')
+        elif file_type == "image":
+            key_prefix = config.get('org_img_fn', '')
+        else:
+            key_prefix = config.get('cgi_fn', '')
+        
+        return f"{end_point}/{bucket}/{key_prefix}{filename}"
 
     # ------------------------- Flush helpers -------------------------
     def _smart_flush(self):
@@ -374,74 +465,6 @@ class KafkaHandler:
                 self.last_flush_time = time.time()
                 self.messages_since_flush = 0
 
-    def upload_to_minio( image_bytes, retries=3, delay=2):
-        global s3_client,minio_client
-        unique_filename = f"{uuid.uuid4()}.jpg"
-        for attempt in range(retries):
-            try:
-                minio_client.put_object(
-                                Bucket="arrestominio",
-                                Key=unique_filename,
-                                Body=image_bytes,
-                                ContentType='image/jpg'
-                            )
-                minio_url = f"http://localhost:9000/arrestominio/{unique_filename}"
-                print(f"DEBUG: Successfully uploaded Image to {minio_url}")
-                return f"{unique_filename}"
-            except Exception as e:
-                print(f"S3 upload failed, attempt {attempt + 1}/{retries}: {str(e)}")
-                time.sleep(delay)
-        
-        return None
-    
-    def make_labelled_image(message):
-        # Decode bytes → numpy image
-        nparr = np.frombuffer(message["org_img"], np.uint8)
-        org_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if org_img is None:
-            raise ValueError("Could not decode org_img from bytes")
-
-        # Parse image size (W:H)
-        width, height = map(int, message["imgsz"].split(":"))
-        #print(width,height)
-
-        # Draw all bounding boxes
-        for bbox in message["absolute_bbox"]:
-            x_pct, y_pct, w_pct, h_pct = map(float, bbox["xywh"])
-            
-            #print(bbox["xywh"])
-
-            # Convert percentages to pixel values
-            x_center = int(x_pct * width/100)
-            y_center = int(y_pct * height/100)
-            w = int(w_pct * width/100)
-            h = int(h_pct * height/100)
-
-            # Convert (x,y,w,h) center format → top-left and bottom-right
-            x1 = int(x_center)
-            y1 = int(y_center)
-            x2 = int(x_center + w)
-            y2 = int(y_center + h)
-            #print(x1,y1,x2,y2,"These are cordinate")
-
-            # Convert HEX color → BGR
-            color_hex = message["color"].lstrip("#")
-            bgr = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
-
-            # Draw bbox
-            cv2.rectangle(org_img, (x1, y1), (x2, y2), bgr, 2)
-
-            # Label text
-            label = f"{bbox['class_name']} {bbox['confidence']:.2f}"
-            cv2.putText(org_img, label, (x1, max(0, y1-5)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr, 2, cv2.LINE_AA)
-
-        # Encode back to bytes (JPEG)
-        success, buffer = cv2.imencode(".jpg", org_img)
-        if not success:
-            raise ValueError("Could not encode labelled image")
-        print( " Success Fully Labelled")
-        return buffer.tobytes()
     # ------------------------- Queue processing -------------------------
     def process_events_queue(self, events_queue: queue.Queue, topic: str,api_m,kafka_m) -> bool:
         try:
@@ -453,65 +476,32 @@ class KafkaHandler:
             snap_shot_bytes = message.get("snap_shot")
             video_bytes = message.get("video")
 
-            uploads = {}
-            # futures = {
-            #     self.executor.submit(self.upload_to_s3_safe, image_bytes, "image"): "org_img",
-            #     self.executor.submit(self.upload_to_s3_safe, snap_shot_bytes, "snapshot"): "snap_shot",
-            #     self.executor.submit(self.upload_to_s3_safe, video_bytes, "video"): "video"
-            # }
-
-            # for fut in as_completed(futures):
-            #     key = futures[fut]
-            #     try:
-            #         uploads[key] = fut.result()
-            #     except Exception as e:
-            #         print(f"DEBUG: Upload task failed for {key}: {e}")
-            #         uploads[key] = None
-
-            # message["org_img"] = uploads.get("org_img")
-            # message["snap_shot"] = uploads.get("snap_shot")
-            # message["video"] = uploads.get("video")
-            labelled_image_bytes = self.make_labelled_image(message)
-            image_s3_url = self.upload_to_minio(image_bytes)
-            labelled_image_s3_url = self.upload_to_minio(labelled_image_bytes)
-            # Send message with timeout
-            # Extract category and subcategory from "Category-Subcategory"
-            subcategory_full = message["absolute_bbox"][0]["subcategory"]
-            parts = subcategory_full.split("-", 1)
-            event_category = parts[0] if len(parts) > 0 else subcategory_full
-            event_subcategory = parts[1] if len(parts) > 1 else ""
-            if labelled_image_s3_url:
-                message["org_img"] = image_s3_url
                 
             if message["org_img"] is not None:
-                if api_m:                    
-                    try:
-                        # Option 1: With API key
-                        #response = call_api(self.api_template, "upload_data", message)
-                        response = fill_form(
-                                            'template.json',
-                                            {
-                                                "id": "7f148215-d1c5-4b83-bf58-3a2249d4b107",  
-                                                "timestamp": message["datetimestamp"],
-                                                "image_original": f"http://localhost:9000/arrestominio/{image_s3_url}",
-                                                "image_labelled": f"http://localhost:9000/arrestominio/{labelled_image_s3_url}", 
-                                                "video_clip": "",       
-                                                "remarks": "Violation Detected",
-                                                "event_category": event_category,
-                                                "whom_to_notify": "mohammed@arresto.in", 
-                                                "camera_unique_id": "3acbb55c-d6cb-4470-8d9c-5d8de5223bea",
-                                                "safety_captain_id": "varun@arresto.in",
-                                                "incident_occured_on": message["datetimestamp_trackerid"],
-                                                "incident_updated_on": message["datetimestamp_trackerid"],
-                                                "action_status": "Pending",
-                                                "event_subcategory": event_subcategory
-                                            }
-                                        )
-                        print(f"Successfully sent message to {topic},{response}")
-                    except Exception as e:
-                        print(f"DEBUG Call Failed: {e}")
+                if api_m:
+                    # Use API Handler to process and submit
+                    self.api_handler.process_and_submit(message, topic)
                 
                 if kafka_m:
+                    uploads = {}
+                    futures = {
+                        self.executor.submit(self.upload_to_s3_safe, image_bytes, "image", False): "org_img",
+                        self.executor.submit(self.upload_to_s3_safe, snap_shot_bytes, "snapshot", False): "snap_shot",
+                        self.executor.submit(self.upload_to_s3_safe, video_bytes, "video", False): "video"
+                    }
+
+                    for fut in as_completed(futures):
+                        key = futures[fut]
+                        try:
+                            uploads[key] = fut.result()
+                        except Exception as e:
+                            print(f"DEBUG: Upload task failed for {key}: {e}")
+                            uploads[key] = None
+
+                    message["org_img"] = uploads.get("org_img")
+                    message["snap_shot"] = uploads.get("snap_shot")
+                    message["video"] = uploads.get("video")
+
                     if not self._ensure_kafka_pipeline():
                         print("DEBUG: Kafka pipeline unavailable, skipping message")
                         return False
@@ -547,16 +537,12 @@ class KafkaHandler:
         api_m = True if api_mode == 1 else False
         kafka_m = True if kafka_mode == 1 else False
 
-        try:
-            if api_m:
-                self.api_template = load_api_template("api_template.json")
-        except:
-            print(f"FAILED TO LOAD API Template")
         consecutive_empty_cycles = 0
         retry_sleep = 1
 
         print(f"DEBUG: Starting continuous Kafka loop with brokers: {self.brokers}")
-        print(f"DEBUG: S3 buckets: {[config.get('BUCKET_NAME') for config in self.s3_configs.values()]}")
+        print(f"DEBUG: Normal S3 buckets: {[config.get('BUCKET_NAME') for config in self.s3_configs.values()]}")
+        print(f"DEBUG: API S3 buckets: {[config.get('BUCKET_NAME') for config in self.api_s3_configs.values()]}")
 
         while not self._stop_event.is_set():
             try:

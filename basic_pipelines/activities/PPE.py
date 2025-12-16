@@ -6,7 +6,7 @@ from activities.activity_helper_utils import (
 )
 from shapely.geometry import Point, Polygon
 
-class Ppe:
+class PPE:
     def __init__(self, parent,zone_data,parameters):
         """
         parent: reference to user_app_callback_class (for detections, events, etc.)
@@ -80,9 +80,9 @@ class Ppe:
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
                                         xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
-                                        datetimestamp_trackerid=f"{datetime.now(self.ist_timezone).isoformat()}"
+                                        datetimestamp=f"{datetime.now(self.ist_timezone).isoformat()}"
                                         subcategory=ppe_objects[ppe_obj_class]
-                                        self.create_result_events(xywh,obj_class,f"PPE-{subcategory}",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
+                                        self.create_result_events(xywh,obj_class,f"PPE-{subcategory}",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
 
     def cleaning(self):
         self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]

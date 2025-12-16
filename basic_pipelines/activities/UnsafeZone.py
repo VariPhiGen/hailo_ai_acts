@@ -73,8 +73,8 @@ class UnsafeZone:
                             if tracker_id not in self.violation_id_data:
                                 self.violation_id_data.append(tracker_id)
                                 xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
-                                datetimestamp_trackerid=f"{datetime.now(self.timezone).isoformat()}"
-                                self.parent.create_result_events(xywh,obj_class,f"Hazardous Area-Unsafe Zone",{"zone_name":zone_name},datetimestamp_trackerid,confidence=1)
+                                datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
+                                self.parent.create_result_events(xywh,obj_class,f"Hazardous Area-Unsafe Zone",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
             
         #print("Yes Running Successfully", self.zone_data,self.parameters)
 

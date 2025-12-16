@@ -99,12 +99,12 @@ class CameraTampering:
 
             if self.running_data["frame_count"] > 0:
                 xywh = [0, 0, 100, 100]
-                datetimestamp_trackerid = f"{datetime.now(self.timezone).isoformat()}"
+                datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
                 if hash_diff >20:
-                    self.create_result_events(xywh, "Tampering", "Security-Camera_Movement", {}, datetimestamp_trackerid, confidence=1)
+                    self.create_result_events(xywh, "Tampering", "Security-Camera_Movement", {}, datetimestamp, 1,self.parent.image)
                     print("Work Done Movement")
                 else:    
-                    self.create_result_events(xywh, "Tampering", "Security-Camera_Tampering", {}, datetimestamp_trackerid, confidence=1)
+                    self.create_result_events(xywh, "Tampering", "Security-Camera_Tampering", {}, datetimestamp, 1,self.parent.image)
                     print("Work Done Tampering")
 
                 # Update the reference frame after tampering
