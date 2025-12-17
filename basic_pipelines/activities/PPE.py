@@ -2,7 +2,9 @@ import time
 from datetime import datetime
 import pytz
 from activities.activity_helper_utils import (
-    is_bottom_in_zone,xywh_original_percentage
+    is_bottom_in_zone,
+    is_object_in_zone,
+    xywh_original_percentage
 )
 from shapely.geometry import Point, Polygon
 
@@ -16,6 +18,10 @@ class PPE:
         self.parameters = parameters
         self.zone_data = zone_data
         self.running_data = {}
+
+        # Default relay attributes
+        self.relay = None
+        self.switch_relay = []
 
         #Initialize Relay
         if parameters["relay"]==1:
@@ -60,7 +66,7 @@ class PPE:
                         for ppe_idx in ppe_indices:
                             ppe_box=self.parent.detection_boxes[ppe_idx]
                             ppe_obj_class=self.parent.classes[ppe_idx]
-                            if self.is_object_in_zone(ppe_box,person_poly) and (tracker_id not in self.violation_id_data[ppe_obj_class] or self.parameters["relay"]==1):
+                            if is_object_in_zone(ppe_box, person_poly) and (tracker_id not in self.violation_id_data[ppe_obj_class] or self.parameters["relay"]==1):
                                 if tracker_id not in self.running_data[zone_name]:
                                     self.running_data[zone_name][tracker_id] = {}
                                 # Now, check if the ppe_obj_class key exists for this tracker_id
@@ -80,9 +86,18 @@ class PPE:
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
                                         xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
-                                        datetimestamp=f"{datetime.now(self.ist_timezone).isoformat()}"
+                                        datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
                                         subcategory=ppe_objects[ppe_obj_class]
-                                        self.create_result_events(xywh,obj_class,f"PPE-{subcategory}",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
+                                        # Use parent's event creator
+                                        self.parent.create_result_events(
+                                            xywh,
+                                            obj_class,
+                                            f"PPE-{subcategory}",
+                                            {"zone_name": zone_name},
+                                            datetimestamp,
+                                            1,
+                                            self.parent.image,
+                                        )
 
     def cleaning(self):
         # Prune per-act violations to only tracker_ids seen in recent frames
