@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Dict, Any, Optional, Callable, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from form_util import fill_form
@@ -130,8 +131,19 @@ class APIHandler:
                 event_category, event_subcategory
             )
 
+            # Resolve template path (config override or default next to this file)
+            template_path = Path(
+                self.config.get(
+                    "api_template_path",
+                    Path(__file__).resolve().parent / "template.json",
+                )
+            )
+            if not template_path.is_file():
+                print(f"DEBUG: API template not found at {template_path}")
+                return False
+
             # Submit form
-            response = fill_form('template.json', form_data)
+            response = fill_form(str(template_path), form_data)
             print(f"Successfully sent message to {topic}, {response}")
             return True
 
