@@ -443,10 +443,13 @@ def app_callback(pad, info, user_data,frame_type):
         # If the user_data.use_frame is set to True, we can get the video frame from the buffer
         frame = None
         if format is not None and width is not None and height is not None:
-            buf_timestamp = buffer.pts  # nanoseconds
-            ts = buf_timestamp / Gst.SECOND
-            #print(ts)
-            user_data.time_stamp.append(ts)
+            try:
+                buf_timestamp = buffer.pts  # nanoseconds
+                ts = buf_timestamp / Gst.SECOND
+                user_data.time_stamp.append(ts)
+            except TypeError:
+                # If buffer isn't a proper Gst.Buffer, skip this frame
+                return Gst.PadProbeReturn.OK
             # Get video frame
             frame = get_numpy_from_buffer(buffer, format, width, height)
             user_data.model_image=frame
