@@ -85,15 +85,15 @@ class PPE:
                                         self.create_result_events(xywh,obj_class,f"PPE-{subcategory}",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
 
     def cleaning(self):
-        self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]
-        for zone_name in self.zone_data.keys():
-            self.running_data[zone_name] = {
-                key: value
-                for key, value in self.running_data[zone_name].items()
-                if key in self.parent.last_n_frame_tracker_ids
-            }
+        # Prune per-act violations to only tracker_ids seen in recent frames
         for acts in self.parameters["subcategory_mapping"]:
-            self.violation_id_data[acts]=[ tracker_id for tracker_id in self.violation_id_data[acts] if tracker_id in self.parent.last_n_frame_tracker_ids]
+            self.violation_id_data[acts] = [
+                tracker_id
+                for tracker_id in self.violation_id_data[acts]
+                if tracker_id in self.parent.last_n_frame_tracker_ids
+            ]
+
+        # Prune running_data per zone to only active tracker_ids
         for zone_name in self.zone_data.keys():
             self.running_data[zone_name] = {
                 key: value
