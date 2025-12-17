@@ -175,7 +175,7 @@ class KafkaHandler:
 
     def _setup_video_recorder(self):
         try:
-            self.recorder = VideoClipRecorder(maxlen=60, fps=20, prefix="clips")
+            self.recorder = VideoClipRecorder(maxlen=300, fps=15, prefix="clips")
         except Exception as e:
             print(f"DEBUG: VideoClipRecorder init failed: {e}")
             self.recorder = None
