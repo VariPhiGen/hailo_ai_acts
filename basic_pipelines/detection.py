@@ -444,17 +444,22 @@ def app_callback(pad, info, user_data,frame_type):
         frame = None
         if format is not None and width is not None and height is not None:
             try:
+                # Guard against unexpected buffer types
+                if not isinstance(buffer, Gst.Buffer):
+                    return Gst.PadProbeReturn.OK
+
                 buf_timestamp = buffer.pts  # nanoseconds
                 ts = buf_timestamp / Gst.SECOND
                 user_data.time_stamp.append(ts)
+
+                # Get video frame
+                frame = get_numpy_from_buffer(buffer, format, width, height)
+                user_data.model_image=frame
+                if user_data.recorder is not None:
+                    user_data.recorder.add_frame(frame)
             except TypeError:
                 # If buffer isn't a proper Gst.Buffer, skip this frame
                 return Gst.PadProbeReturn.OK
-            # Get video frame
-            frame = get_numpy_from_buffer(buffer, format, width, height)
-            user_data.model_image=frame
-            if user_data.recorder is not None:
-                user_data.recorder.add_frame(frame)
             
             
         # Get the detections from the buffer
