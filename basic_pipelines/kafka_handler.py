@@ -379,11 +379,16 @@ class KafkaHandler:
             client = s3_clients.get(s3_name)
             config = s3_configs.get(s3_name)
             if not client or not config:
+                print(f"DEBUG: S3 client/config missing for {s3_name} (client={bool(client)}, config={bool(config)})")
                 s3_health[s3_name] = False
                 continue
 
             unique_filename = (f"clips{uuid.uuid4()}.mp4" if file_type == "video" else f"{uuid.uuid4()}.jpg")
             content_type = ("video/mp4" if file_type == "video" else "image/jpg")
+            bucket = config.get("BUCKET_NAME")
+            endpoint = config.get("end_point_url")
+            key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
+            video_prefix = config.get('video_fn', '')
 
             for attempt in range(upload_retries):
                 try:
@@ -391,62 +396,30 @@ class KafkaHandler:
                         client.upload_fileobj(
                             io.BytesIO(file_bytes),
                             Bucket=config.get("BUCKET_NAME"),
-                            Key=f"{config.get('video_fn', '')}{unique_filename}",
+                            Key=f"{video_prefix}{unique_filename}",
                             ExtraArgs={"ContentType": content_type},
                             Config=S3_TRANSFER_CONFIG,
                         )
-                        url = f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
+                        url = f"{endpoint}/{bucket}/{video_prefix}{unique_filename}"
                         return unique_filename
                     else:
-                        key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
                         client.put_object(
-                            Bucket=config.get("BUCKET_NAME"),
+                            Bucket=bucket,
                             Key=f"{key_prefix}{unique_filename}",
                             Body=file_bytes,
                             ContentType=content_type,
                         )
-                        url = f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
+                        url = f"{endpoint}/{bucket}/{key_prefix}{unique_filename}"
                         return unique_filename
                 except Exception as e:
-                    print(f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} failed: {e}")
+                    print(
+                        f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} "
+                        f"(endpoint={endpoint}, bucket={bucket}, key_prefix={video_prefix if file_type=='video' else key_prefix}) failed: {e}"
+                    )
                     time.sleep(0.5 * (attempt + 1))
             
             # Mark as unhealthy after retries
             s3_health[s3_name] = False
-
-        # Last-ditch attempt with any S3 bucket of the same type
-        for name, config in s3_configs.items():
-            if name in tried:
-                continue
-            client = s3_clients.get(name)
-            if not client or not config:
-                s3_health[name] = False
-                continue
-            try:
-                unique_filename = (f"clips{uuid.uuid4()}.mp4" if file_type == "video" else f"{uuid.uuid4()}.jpg")
-                content_type = ("video/mp4" if file_type == "video" else "image/jpg")
-                
-                if file_type == "video":
-                    client.upload_fileobj(
-                        io.BytesIO(file_bytes),
-                        Bucket=config.get("BUCKET_NAME"),
-                        Key=f"{config.get('video_fn', '')}{unique_filename}",
-                        ExtraArgs={"ContentType": content_type},
-                        Config=S3_TRANSFER_CONFIG
-                    )
-                    return f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{config.get('video_fn', '')}{unique_filename}"
-                else:
-                    key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
-                    client.put_object(
-                        Bucket=config.get("BUCKET_NAME"),
-                        Key=f"{key_prefix}{unique_filename}",
-                        Body=file_bytes,
-                        ContentType=content_type
-                    )
-                    return f"{config.get('end_point_url')}/{config.get('BUCKET_NAME')}/{key_prefix}{unique_filename}"
-            except Exception as e:
-                print(f"DEBUG: Last-ditch upload to {name} failed: {e}")
-                continue
 
         return None
 
