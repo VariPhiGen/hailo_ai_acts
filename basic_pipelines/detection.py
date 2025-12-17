@@ -594,49 +594,57 @@ if __name__ == "__main__":
 
     # AWS S3 overrides (primary / secondary)
     s3 = kafka_vars.get("AWS_S3", {})
-    if os.getenv("AWS_PRIMARY_KEY") and os.getenv("AWS_PRIMARY_SECRET"):
+    # Helpers to read env with backward-compatible aliases
+    def _env(*names, default=None):
+        for n in names:
+            v = os.getenv(n)
+            if v is not None and v != "":
+                return v
+        return default
+
+    if _env("AWS_PRIMARY_KEY", "AWS_PRIMARY_KEY_ID") and _env("AWS_PRIMARY_SECRET"):
         s3.setdefault("primary", {})
-        s3["primary"]["aws_access_key_id"] = os.getenv("AWS_PRIMARY_KEY")
-        s3["primary"]["aws_secret_access_key"] = os.getenv("AWS_PRIMARY_SECRET")
-        s3["primary"]["end_point_url"] = os.getenv("AWS_PRIMARY_ENDPOINT")
-        s3["primary"]["region_name"] = os.getenv("AWS_PRIMARY_REGION", "ap-south-1")
-        s3["primary"]["BUCKET_NAME"] = os.getenv("AWS_PRIMARY_BUCKET_NAME", "arrestovideos")
-        s3["primary"]["org_img_fn"] = os.getenv("AWS_PRIMARY_ORG_IMG_FN", "violationoriginalimages/")
-        s3["primary"]["video_fn"] = os.getenv("AWS_PRIMARY_VIDEO_FN", "videoclips/")
-        s3["primary"]["cgi_fn"] = os.getenv("AWS_PRIMARY_CGI_FN", "cgisnapshots/")
+        s3["primary"]["aws_access_key_id"] = _env("AWS_PRIMARY_KEY", "AWS_PRIMARY_KEY_ID")
+        s3["primary"]["aws_secret_access_key"] = _env("AWS_PRIMARY_SECRET")
+        s3["primary"]["end_point_url"] = _env("AWS_PRIMARY_ENDPOINT")
+        s3["primary"]["region_name"] = _env("AWS_PRIMARY_REGION", default="ap-south-1")
+        s3["primary"]["BUCKET_NAME"] = _env("AWS_PRIMARY_BUCKET_NAME", "AWS_PRIMARY_BUCKET", default="arrestovideos")
+        s3["primary"]["org_img_fn"] = _env("AWS_PRIMARY_ORG_IMG_FN", "AWS_PRIMARY_ORG_IMG_PATH", default="violationoriginalimages/")
+        s3["primary"]["video_fn"] = _env("AWS_PRIMARY_VIDEO_FN", "AWS_PRIMARY_VIDEO_PATH", default="videoclips/")
+        s3["primary"]["cgi_fn"] = _env("AWS_PRIMARY_CGI_FN", "AWS_PRIMARY_CGI_PATH", default="cgisnapshots/")
    
-    if os.getenv("AWS_SECONDARY_KEY") and os.getenv("AWS_SECONDARY_SECRET"):
+    if _env("AWS_SECONDARY_KEY", "AWS_SECONDARY_KEY_ID") and _env("AWS_SECONDARY_SECRET"):
         s3.setdefault("secondary", {})
-        s3["secondary"]["aws_access_key_id"] = os.getenv("AWS_SECONDARY_KEY")
-        s3["secondary"]["aws_secret_access_key"] = os.getenv("AWS_SECONDARY_SECRET")
-        s3["secondary"]["end_point_url"] = os.getenv("AWS_SECONDARY_ENDPOINT")
-        s3["secondary"]["region_name"] = os.getenv("AWS_SECONDARY_REGION", "ap-south-1")
-        s3["secondary"]["BUCKET_NAME"] = os.getenv("AWS_SECONDARY_BUCKET_NAME", "arrestovideos")
-        s3["secondary"]["org_img_fn"] = os.getenv("AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
-        s3["secondary"]["video_fn"] = os.getenv("AWS_SECONDARY_VIDEO_FN", "videoclips/")
-        s3["secondary"]["cgi_fn"] = os.getenv("AWS_SECONDARY_CGI_FN", "cgisnapshots/")
+        s3["secondary"]["aws_access_key_id"] = _env("AWS_SECONDARY_KEY", "AWS_SECONDARY_KEY_ID")
+        s3["secondary"]["aws_secret_access_key"] = _env("AWS_SECONDARY_SECRET")
+        s3["secondary"]["end_point_url"] = _env("AWS_SECONDARY_ENDPOINT")
+        s3["secondary"]["region_name"] = _env("AWS_SECONDARY_REGION", default="ap-south-1")
+        s3["secondary"]["BUCKET_NAME"] = _env("AWS_SECONDARY_BUCKET_NAME", "AWS_SECONDARY_BUCKET", default="arrestovideos")
+        s3["secondary"]["org_img_fn"] = _env("AWS_SECONDARY_ORG_IMG_FN", "AWS_SECONDARY_ORG_IMG_PATH", default="violationoriginalimages/")
+        s3["secondary"]["video_fn"] = _env("AWS_SECONDARY_VIDEO_FN", "AWS_SECONDARY_VIDEO_PATH", default="videoclips/")
+        s3["secondary"]["cgi_fn"] = _env("AWS_SECONDARY_CGI_FN", "AWS_SECONDARY_CGI_PATH", default="cgisnapshots/")
 
-    if os.getenv("API_AWS_PRIMARY_KEY") and os.getenv("API_AWS_PRIMARY_SECRET"):
+    if _env("API_AWS_PRIMARY_KEY", "API_AWS_PRIMARY_KEY_ID") and _env("API_AWS_PRIMARY_SECRET"):
         s3.setdefault("api_primary", {})
-        s3["api_primary"]["aws_access_key_id"] = os.getenv("API_AWS_PRIMARY_KEY")
-        s3["api_primary"]["aws_secret_access_key"] = os.getenv("API_AWS_PRIMARY_SECRET")
-        s3["api_primary"]["end_point_url"] = os.getenv("API_AWS_PRIMARY_ENDPOINT")
-        s3["api_primary"]["region_name"] = os.getenv("API_AWS_PRIMARY_REGION", "ap-south-1")
-        s3["api_primary"]["BUCKET_NAME"] = os.getenv("API_AWS_PRIMARY_BUCKET_NAME", "arrestovideos")
-        s3["api_primary"]["org_img_fn"] = os.getenv("API_AWS_PRIMARY_ORG_IMG_FN", "violationoriginalimages/")
-        s3["api_primary"]["video_fn"] = os.getenv("API_AWS_PRIMARY_VIDEO_FN", "videoclips/")
-        s3["api_primary"]["cgi_fn"] = os.getenv("API_AWS_PRIMARY_CGI_FN", "cgisnapshots/")
+        s3["api_primary"]["aws_access_key_id"] = _env("API_AWS_PRIMARY_KEY", "API_AWS_PRIMARY_KEY_ID")
+        s3["api_primary"]["aws_secret_access_key"] = _env("API_AWS_PRIMARY_SECRET")
+        s3["api_primary"]["end_point_url"] = _env("API_AWS_PRIMARY_ENDPOINT")
+        s3["api_primary"]["region_name"] = _env("API_AWS_PRIMARY_REGION", default="ap-south-1")
+        s3["api_primary"]["BUCKET_NAME"] = _env("API_AWS_PRIMARY_BUCKET_NAME", "API_AWS_PRIMARY_BUCKET", default="arrestovideos")
+        s3["api_primary"]["org_img_fn"] = _env("API_AWS_PRIMARY_ORG_IMG_FN", "API_AWS_PRIMARY_ORG_IMG_PATH", default="violationoriginalimages/")
+        s3["api_primary"]["video_fn"] = _env("API_AWS_PRIMARY_VIDEO_FN", "API_AWS_PRIMARY_VIDEO_PATH", default="videoclips/")
+        s3["api_primary"]["cgi_fn"] = _env("API_AWS_PRIMARY_CGI_FN", "API_AWS_PRIMARY_CGI_PATH", default="cgisnapshots/")
 
-    if os.getenv("API_AWS_SECONDARY_KEY") and os.getenv("API_AWS_SECONDARY_SECRET"):
+    if _env("API_AWS_SECONDARY_KEY", "API_AWS_SECONDARY_KEY_ID") and _env("API_AWS_SECONDARY_SECRET"):
         s3.setdefault("api_secondary", {})
-        s3["api_secondary"]["aws_access_key_id"] = os.getenv("API_AWS_SECONDARY_KEY")
-        s3["api_secondary"]["aws_secret_access_key"] = os.getenv("API_AWS_SECONDARY_SECRET")
-        s3["api_secondary"]["end_point_url"] = os.getenv("API_AWS_SECONDARY_ENDPOINT")
-        s3["api_secondary"]["region_name"] = os.getenv("API_AWS_SECONDARY_REGION", "ap-south-1")
-        s3["api_secondary"]["BUCKET_NAME"] = os.getenv("API_AWS_SECONDARY_BUCKET_NAME", "arrestovideos")
-        s3["api_secondary"]["org_img_fn"] = os.getenv("API_AWS_SECONDARY_ORG_IMG_FN", "violationoriginalimages/")
-        s3["api_secondary"]["video_fn"] = os.getenv("API_AWS_SECONDARY_VIDEO_FN", "videoclips/")
-        s3["api_secondary"]["cgi_fn"] = os.getenv("API_AWS_SECONDARY_CGI_FN", "cgisnapshots/")
+        s3["api_secondary"]["aws_access_key_id"] = _env("API_AWS_SECONDARY_KEY", "API_AWS_SECONDARY_KEY_ID")
+        s3["api_secondary"]["aws_secret_access_key"] = _env("API_AWS_SECONDARY_SECRET")
+        s3["api_secondary"]["end_point_url"] = _env("API_AWS_SECONDARY_ENDPOINT")
+        s3["api_secondary"]["region_name"] = _env("API_AWS_SECONDARY_REGION", default="ap-south-1")
+        s3["api_secondary"]["BUCKET_NAME"] = _env("API_AWS_SECONDARY_BUCKET_NAME", "API_AWS_SECONDARY_BUCKET", default="arrestovideos")
+        s3["api_secondary"]["org_img_fn"] = _env("API_AWS_SECONDARY_ORG_IMG_FN", "API_AWS_SECONDARY_ORG_IMG_PATH", default="violationoriginalimages/")
+        s3["api_secondary"]["video_fn"] = _env("API_AWS_SECONDARY_VIDEO_FN", "API_AWS_SECONDARY_VIDEO_PATH", default="videoclips/")
+        s3["api_secondary"]["cgi_fn"] = _env("API_AWS_SECONDARY_CGI_FN", "API_AWS_SECONDARY_CGI_PATH", default="cgisnapshots/")
     
     s3["s3_failover_timeout"]= int(os.getenv("S3_FAILOVER_TIMEOUT", 30)),
     s3["upload_retries"]= int(os.getenv("S3_UPLOAD_RETRIES", 3))
