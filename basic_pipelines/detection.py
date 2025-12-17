@@ -415,8 +415,8 @@ class user_app_callback_class(app_callback_class):
 def app_callback(pad, info, user_data,frame_type):
     # Get the GstBuffer from the probe info
     buffer = info.get_buffer()
-    # Check if the buffer is valid
-    if buffer is None:
+    # Check if the buffer is valid and of correct type
+    if buffer is None or not isinstance(buffer, Gst.Buffer):
         return Gst.PadProbeReturn.OK
 
     # Simple frame counter for external monitoring
