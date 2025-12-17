@@ -1,23 +1,23 @@
 #!/bin/bash
 
-# SVDS Detection Service Setup Script (with log rotation)
+# acts Detection Service Setup Script (with log rotation)
 # --------------------------------------------------------
 # This script sets up:
-#   - svds-detection.service (your detection pipeline)
-#   - svds-reboot.service (24h auto reboot)
-#   - /var/log/svds-detection.log with logrotate policy
+#   - acts-detection.service (your detection pipeline)
+#   - acts-reboot.service (24h auto reboot)
+#   - /var/log/acts-detection.log with logrotate policy
 
 set -euo pipefail
 
-SERVICE_NAME="svds-detection"
-REBOOT_SERVICE_NAME="svds-reboot"
+SERVICE_NAME="acts-detection"
+REBOOT_SERVICE_NAME="acts-reboot"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DETECTION_SCRIPT="$SCRIPT_DIR/run_detection.sh"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 REBOOT_SERVICE_FILE="/etc/systemd/system/${REBOOT_SERVICE_NAME}.service"
 REBOOT_SCRIPT="$SCRIPT_DIR/reboot_system.sh"
-LOG_FILE="/var/log/svds-detection.log"
-LOGROTATE_CONF="/etc/logrotate.d/svds-detection"
+LOG_FILE="/var/log/acts-detection.log"
+LOGROTATE_CONF="/etc/logrotate.d/acts-detection"
 
 # Run as root
 if [[ $EUID -ne 0 ]]; then
@@ -50,7 +50,7 @@ chmod 664 "$LOG_FILE"
 cat > "$REBOOT_SCRIPT" << 'EOF'
 #!/bin/bash
 sleep 86400   # 24 hours
-systemctl stop svds-detection
+systemctl stop acts-detection
 sleep 5
 reboot
 EOF
@@ -59,7 +59,7 @@ chmod +x "$REBOOT_SCRIPT"
 # --- Detection service ---
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=SVDS Detection Pipeline
+Description=acts Detection Pipeline
 After=network-online.target
 Wants=network-online.target
 
@@ -81,7 +81,7 @@ EOF
 # --- Reboot service ---
 cat > "$REBOOT_SERVICE_FILE" <<EOF
 [Unit]
-Description=SVDS 24-Hour Reboot Service
+Description=acts 24-Hour Reboot Service
 After=network-online.target
 Wants=network-online.target
 
