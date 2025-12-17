@@ -356,8 +356,11 @@ class KafkaHandler:
         upload_retries = int(self.config.get("kafka_variables", {}).get("AWS_S3", {}).get("upload_retries", 3))
         tried = set()
 
-        # Select appropriate configs and clients based on is_api flag
+        # Select appropriate configs and clients based on is_api flag.
         if is_api:
+            if not self.api_s3_configs:
+                print("DEBUG: API upload requested but no API S3 configs; skipping upload.")
+                return None
             s3_configs = self.api_s3_configs
             s3_clients = self.api_s3_clients
             s3_health = self.api_s3_health
