@@ -7,8 +7,6 @@ import threading
 import signal
 import sys
 from datetime import datetime
-from kafka import KafkaProducer
-from kafka.errors import KafkaError, NoBrokersAvailable
 from typing import Optional, Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
@@ -18,6 +16,25 @@ from video_clipper import VideoClipRecorder
 import cv2
 import numpy as np
 from api_handler import APIHandler
+
+# --- Optional Kafka dependency ---
+# This project can run in API-only mode (no Kafka). Import kafka-python lazily/optionally so
+# environments without it can still use API + S3 functionality.
+try:
+    from kafka import KafkaProducer  # type: ignore
+    from kafka.errors import KafkaError, NoBrokersAvailable  # type: ignore
+    KAFKA_AVAILABLE = True
+    _KAFKA_IMPORT_ERROR: Optional[Exception] = None
+except Exception as _e:  # pragma: no cover
+    KafkaProducer = None  # type: ignore
+
+    class KafkaUnavailableError(Exception):
+        """Raised when Kafka functionality is requested but kafka-python is not available."""
+
+    KafkaError = KafkaUnavailableError  # type: ignore
+    NoBrokersAvailable = KafkaUnavailableError  # type: ignore
+    KAFKA_AVAILABLE = False
+    _KAFKA_IMPORT_ERROR = _e
 
 # S3 Transfer configuration
 S3_TRANSFER_CONFIG = TransferConfig(
@@ -30,7 +47,10 @@ class KafkaHandler:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.kafka_pipeline: Optional[KafkaProducer] = None
+        # NOTE: Avoid referencing KafkaProducer directly in annotations because it may be None
+        # when kafka-python isn't installed (API-only mode).
+        self.kafka_pipeline: Optional[Any] = None
+        self.kafka_available: bool = bool(KAFKA_AVAILABLE)
         self.s3_clients: Dict[str, Any] = {}
         self.api_s3_clients: Dict[str, Any] = {}
         self.recorder: Optional[VideoClipRecorder] = None
@@ -68,6 +88,12 @@ class KafkaHandler:
         self._setup_video_recorder()
         self._start_health_monitor()
         self._setup_signal_handlers()
+
+        if not self.kafka_available:
+            print(
+                "DEBUG: kafka-python not available; Kafka mode disabled. "
+                f"API-only can still run. Import error: {_KAFKA_IMPORT_ERROR}"
+            )
         
         # Initialize API Handler (after setup is complete)
         self.api_handler = APIHandler(
@@ -188,6 +214,8 @@ class KafkaHandler:
             return False
 
     def _test_broker_connectivity(self, broker: str) -> bool:
+        if not self.kafka_available or KafkaProducer is None:
+            return False
         try:
             test_producer = KafkaProducer(bootstrap_servers=str(broker), request_timeout_ms=3000, max_block_ms=2000)
             test_producer.close()
@@ -199,12 +227,13 @@ class KafkaHandler:
         def monitor():
             while not self._stop_event.is_set():
                 try:
-                    for broker in self.brokers:
-                        if not self.broker_health.get(broker, False):
-                            healthy = self._test_broker_connectivity(broker)
-                            self.broker_health[broker] = healthy
-                            if healthy:
-                                print(f"DEBUG: Broker recovered: {broker}")
+                    if self.kafka_available:
+                        for broker in self.brokers:
+                            if not self.broker_health.get(broker, False):
+                                healthy = self._test_broker_connectivity(broker)
+                                self.broker_health[broker] = healthy
+                                if healthy:
+                                    print(f"DEBUG: Broker recovered: {broker}")
                     
                     for s3_name in self.s3_configs.keys():
                         if not self.s3_health.get(s3_name, False):
@@ -235,7 +264,9 @@ class KafkaHandler:
         self.current_broker_index += 1
         return broker
 
-    def _create_kafka_producer(self, max_attempts=3) -> Optional[KafkaProducer]:
+    def _create_kafka_producer(self, max_attempts=3) -> Optional[Any]:
+        if not self.kafka_available or KafkaProducer is None:
+            return None
         attempt = 0
         backoff = 1
         while attempt < max_attempts and not self._stop_event.is_set():
@@ -272,6 +303,8 @@ class KafkaHandler:
         return None
 
     def _ensure_kafka_pipeline(self) -> bool:
+        if not self.kafka_available:
+            return False
         if self.kafka_pipeline:
             return True
         producer = self._create_kafka_producer(max_attempts=1)
@@ -288,7 +321,8 @@ class KafkaHandler:
                 pass
             finally:
                 self.kafka_pipeline = None
-        self.kafka_pipeline = self._create_kafka_producer()
+        if self.kafka_available:
+            self.kafka_pipeline = self._create_kafka_producer()
 
     # ------------------------- S3 upload helpers -------------------------
     def _get_next_healthy_s3(self, is_api: bool = False) -> Optional[str]:
@@ -537,6 +571,11 @@ class KafkaHandler:
         api_m = True if api_mode == 1 else False
         kafka_m = True if kafka_mode == 1 else False
 
+        # If Kafka was requested but kafka-python isn't available, gracefully degrade to API-only.
+        if kafka_m and not self.kafka_available:
+            print("DEBUG: kafka_mode requested but kafka-python is unavailable; running with kafka_mode=0 (API-only).")
+            kafka_m = False
+
         consecutive_empty_cycles = 0
         retry_sleep = 1
 
@@ -546,15 +585,20 @@ class KafkaHandler:
 
         while not self._stop_event.is_set():
             try:
-                if not self._ensure_kafka_pipeline() and kafka_m:
-                    time.sleep(retry_sleep)
-                    retry_sleep = min(retry_sleep * 2, 10)
-                    continue
-                retry_sleep = 1
+                # Important: only touch Kafka pipeline if kafka_m is True.
+                # Also: do NOT block API processing just because Kafka is down. If Kafka can't be
+                # ensured, we temporarily disable Kafka publishing for this cycle.
+                kafka_enabled = kafka_m
+                if kafka_m:
+                    if not self._ensure_kafka_pipeline():
+                        kafka_enabled = False
+                        retry_sleep = min(retry_sleep * 2, 10)
+                    else:
+                        retry_sleep = 1
 
                 messages_processed = 0
                 for queue_obj, topic in queues_and_topics:
-                    if self.process_events_queue(queue_obj,topic,api_m,kafka_m):
+                    if self.process_events_queue(queue_obj, topic, api_m, kafka_enabled):
                         messages_processed += 1
 
                 if messages_processed == 0:

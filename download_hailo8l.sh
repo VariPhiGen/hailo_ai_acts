@@ -22,6 +22,7 @@ H8L_HEFS=(
   "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/yolov5n_seg.hef"
 )
 
+
 # Download each model
 for model_url in "${H8L_HEFS[@]}"; do
   model_name=$(basename "$model_url")
