@@ -419,6 +419,9 @@ class KafkaHandler:
             if name in tried:
                 continue
             client = s3_clients.get(name)
+            if not client or not config:
+                s3_health[name] = False
+                continue
             try:
                 unique_filename = (f"clips{uuid.uuid4()}.mp4" if file_type == "video" else f"{uuid.uuid4()}.jpg")
                 content_type = ("video/mp4" if file_type == "video" else "image/jpg")
