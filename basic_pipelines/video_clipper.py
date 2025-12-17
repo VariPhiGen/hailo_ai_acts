@@ -11,7 +11,7 @@ import gc
 
 
 class VideoClipRecorder:
-    def __init__(self, maxlen=60, fps=20, prefix: str = "clips"):
+    def __init__(self, maxlen=200, fps=20, prefix: str = "clips"):
         """
         Initialize video recorder for frame buffering and video generation.
         
