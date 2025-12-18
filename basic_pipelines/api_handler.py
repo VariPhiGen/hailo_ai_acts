@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -143,7 +144,8 @@ class APIHandler:
                 return False
 
             # Submit form
-            response = fill_form(str(template_path), form_data)
+            post_url = self.config.get("api_post_url") or os.getenv("API_POST_URL")
+            response = fill_form(str(template_path), form_data, post_url=post_url)
             print(f"Successfully sent message to {topic}, {response}")
             return True
 

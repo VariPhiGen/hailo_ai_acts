@@ -47,6 +47,9 @@ API_AWS_SECONDARY_VIDEO_FN=videoclips/
 API_AWS_SECONDARY_CGI_FN=cgisnapshots/
 API_AWS_SECONDARY_ENDPOINT=
 
+# API POST endpoint (for form submission)
+API_POST_URL=http://localhost:80/api/client/1825/mfb/forms_data
+
 # AWS failover
 S3_FAILOVER_TIMEOUT=30
 S3_UPLOAD_RETRIES=3
