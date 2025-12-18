@@ -146,7 +146,7 @@ class APIHandler:
             # Submit form
             post_url = self.config.get("api_post_url") or os.getenv("API_POST_URL")
             response = fill_form(str(template_path), form_data, post_url=post_url)
-            print(f"Successfully sent message to {topic}, {response}")
+            #print(f"Successfully sent message to {topic}, {response}")
             return True
 
         except Exception as e:
