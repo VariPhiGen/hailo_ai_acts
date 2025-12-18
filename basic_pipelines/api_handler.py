@@ -62,7 +62,7 @@ class APIHandler:
             "incident_updated_on": message.get("datetimestamp_trackerid", ""),
             "action_status": "Pending",
             "event_subcategory": event_subcategory,
-            "sverity":"medium",
+            "severity":"Medium",
             "count":1
         }
 
