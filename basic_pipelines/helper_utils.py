@@ -7,7 +7,7 @@ from shapely.geometry import Point, Polygon
 from typing import List, Tuple, Dict, Any, Optional
 
 
-def make_labelled_image(message):
+def make_labelled_image(message,event_category,event_subcategory):
         # Decode bytes → numpy image
         nparr = np.frombuffer(message["org_img"], np.uint8)
         org_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -45,7 +45,7 @@ def make_labelled_image(message):
             cv2.rectangle(org_img, (x1, y1), (x2, y2), bgr, 2)
 
             # Label text
-            label = f"{bbox['class_name']} {bbox['confidence']:.2f}"
+            label = f"{event_subcategory} {bbox['confidence']:.2f}"
             cv2.putText(org_img, label, (x1, max(0, y1-5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr, 2, cv2.LINE_AA)
 

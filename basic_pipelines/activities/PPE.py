@@ -60,12 +60,18 @@ class PPE:
                 obj_class=self.parent.classes[idx]
                 tracker_id=self.parent.tracker_ids[idx]
                 anchor = self.parent.anchor_points_original[idx]
+                person_detection_score = self.parent.detection_score[idx]
+                if person_detection_score < 0.7:
+                    continue
                 for zone_name, zone_polygon in self.zone_data.items():
                     if is_bottom_in_zone(anchor, zone_polygon):
                         person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
                         for ppe_idx in ppe_indices:
                             ppe_box=self.parent.detection_boxes[ppe_idx]
                             ppe_obj_class=self.parent.classes[ppe_idx]
+                            ppe_confidence=self.parent.detection_score[ppe_idx]
+                            if ppe_confidence < 0.7:
+                                continue
                             if is_object_in_zone(ppe_box, person_poly) and (tracker_id not in self.violation_id_data[ppe_obj_class] or self.parameters["relay"]==1):
                                 if tracker_id not in self.running_data[zone_name]:
                                     self.running_data[zone_name][tracker_id] = {}
@@ -95,7 +101,7 @@ class PPE:
                                             f"PPE-{subcategory}",
                                             {"zone_name": zone_name},
                                             datetimestamp,
-                                            1,
+                                            ppe_confidence,
                                             self.parent.image,
                                         )
 

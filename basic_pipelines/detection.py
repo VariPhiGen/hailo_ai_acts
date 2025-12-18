@@ -77,6 +77,7 @@ class user_app_callback_class(app_callback_class):
         self.classes = None
         self.tracker_ids = None
         self.anchor_points_original = None
+        self.detection_score = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
         self.last_n_frame_tracker_ids = None
         # Initialize a deque to store tracker_ids for the last n frames
@@ -510,6 +511,7 @@ def app_callback(pad, info, user_data,frame_type):
             user_data.classes= class_names
             user_data.tracker_ids=tracker_ids
             user_data.anchor_points_original=anchor_points_original
+            user_data.detection_score=confidences
             
             # Last n frame tracker ids
             user_data.LNFCTI.append(tracker_ids)

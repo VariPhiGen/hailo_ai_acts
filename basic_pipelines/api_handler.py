@@ -61,7 +61,9 @@ class APIHandler:
             "incident_occured_on": message.get("datetimestamp_trackerid", ""),
             "incident_updated_on": message.get("datetimestamp_trackerid", ""),
             "action_status": "Pending",
-            "event_subcategory": event_subcategory
+            "event_subcategory": event_subcategory,
+            "sverity":"medium",
+            "count":1
         }
 
     def process_and_submit(self, message: Dict[str, Any], topic: str = "") -> bool:
@@ -80,13 +82,15 @@ class APIHandler:
             image_bytes = message.get("org_img")
             snap_shot_bytes = message.get("snap_shot")
             video_bytes = message.get("video")
+            # Extract category and subcategory
+            event_category, event_subcategory = self._extract_category_subcategory(message)
 
             if not image_bytes:
                 print("DEBUG: No image bytes in message, skipping API submission")
                 return False
 
             # Create labelled image first (needed before parallel uploads)
-            labelled_image_bytes = make_labelled_image(message)
+            labelled_image_bytes = make_labelled_image(message,event_category,event_subcategory)
 
             # Parallel uploads to API S3
             api_uploads = {}
@@ -109,9 +113,6 @@ class APIHandler:
             if not api_uploads.get("labelled_img"):
                 print("DEBUG: Labelled image upload failed, skipping API submission")
                 return False
-
-            # Extract category and subcategory
-            event_category, event_subcategory = self._extract_category_subcategory(message)
 
             # Get uploaded filenames
             image_filename = api_uploads.get("org_img")
