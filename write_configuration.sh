@@ -3,15 +3,15 @@ set -euo pipefail
 
 TARGET="${1:-configuration.json}"
 
-cat > "$TARGET" <<'EOF'
+cat > "$TARGET" <<EOF
 {
   "sensor_id": "SENSOR_ID_PLACEHOLDER",
   "default_arguments": {
-    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/base.hef",
-    "labels-json": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/ppe-labels.json"
+    "hef_path": "$HOME/hailo_ai_acts/resources/models/hailo8l/base.hef",
+    "labels-json": "$HOME/hailo_ai_acts/resources/models/hailo8l/ppe-labels.json"
   },
   "dashboard_connectivity":{
-    "api":1,
+    "api":0,
     "kafka":1
   },
   "available_activities": [
