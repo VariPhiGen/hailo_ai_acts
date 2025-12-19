@@ -99,7 +99,6 @@ class KafkaHandler:
         self.api_handler = APIHandler(
             executor=self.executor,
             upload_to_s3_safe=self.upload_to_s3_safe,
-            get_api_s3_url=self._get_api_s3_url,
             config=self.config
         )
 
@@ -341,7 +340,28 @@ class KafkaHandler:
             self.current_s3_index += 1
         return name
 
-    def upload_to_s3(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[str]:
+    def _build_s3_url(self, config: Dict[str, Any], filename: str, file_type: str = "image") -> Optional[str]:
+        """Construct full URL for an uploaded file using the provided config."""
+        if not filename or not config:
+            return None
+        end_point = config.get('end_point_url', '')
+        bucket = config.get('BUCKET_NAME', '')
+        if file_type == "video":
+            key_prefix = config.get('video_fn', '')
+        elif file_type == "image":
+            key_prefix = config.get('org_img_fn', '')
+        else:
+            key_prefix = config.get('cgi_fn', '')
+        return f"{end_point}/{bucket}/{key_prefix}{filename}"
+
+    def _get_s3_url(self, filename: str, file_type: str = "image") -> Optional[str]:
+        """Build URL for normal (Kafka) S3 using the first available config."""
+        if not filename or not self.s3_configs:
+            return None
+        first = next(iter(self.s3_configs.values()), None)
+        return self._build_s3_url(first, filename, file_type)
+
+    def upload_to_s3(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[Dict[str, str]]:
         """Upload file to S3 with retries and failover.
         
         Args:
@@ -400,8 +420,8 @@ class KafkaHandler:
                             ExtraArgs={"ContentType": content_type},
                             Config=S3_TRANSFER_CONFIG,
                         )
-                        url = f"{endpoint}/{bucket}/{video_prefix}{unique_filename}"
-                        return unique_filename
+                        url = self._build_s3_url(config, unique_filename, "video")
+                        return {"filename": unique_filename, "url": url}
                     else:
                         client.put_object(
                             Bucket=bucket,
@@ -409,8 +429,8 @@ class KafkaHandler:
                             Body=file_bytes,
                             ContentType=content_type,
                         )
-                        url = f"{endpoint}/{bucket}/{key_prefix}{unique_filename}"
-                        return unique_filename
+                        url = self._build_s3_url(config, unique_filename, file_type)
+                        return {"filename": unique_filename, "url": url}
                 except Exception as e:
                     print(
                         f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} "
@@ -423,7 +443,7 @@ class KafkaHandler:
 
         return None
 
-    def upload_to_s3_safe(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[str]:
+    def upload_to_s3_safe(self, file_bytes: bytes, file_type: str = "image", is_api: bool = False) -> Optional[Dict[str, str]]:
         """Non-blocking S3 upload with retries."""
         try:
             if file_bytes:
@@ -510,16 +530,30 @@ class KafkaHandler:
                         except Exception as e:
                             print(f"DEBUG: Upload task failed for {key}: {e}")
                             uploads[key] = None
+                    # Build final message payload just before send
+                    org_img_info = uploads.get("org_img") or {}
+                    snap_shot_info = uploads.get("snap_shot") or {}
+                    video_info = uploads.get("video") or {}
 
-                    message["org_img"] = uploads.get("org_img")
-                    message["snap_shot"] = uploads.get("snap_shot")
-                    message["video"] = uploads.get("video")
+                    message_out = {
+                        "sensor_id": message.get("sensor_id"),
+                        "org_img": org_img_info.get("url"),
+                        "org_img_local": org_img_info.get("filename"),
+                        "video_url": video_info.get("filename"),
+                        "topic": "arresto_event_produce2",
+                        "absolute_bbox": message.get("absolute_bbox"),
+                        "datetimestamp_trackerid": message.get("datetimestamp"),
+                        "imgsz": message.get("imgsz"),
+                        "severity": "Medium",
+                        "count": len(message.get("absolute_bbox") or []),
+                    }
+
 
                     if not self._ensure_kafka_pipeline():
                         print("DEBUG: Kafka pipeline unavailable, skipping message")
                         return False
                     try:
-                        future = self.kafka_pipeline.send(topic, message)
+                        future = self.kafka_pipeline.send(topic, message_out)
                         record_metadata = future.get(timeout=10)
                         self._smart_flush()
                         #print(f"DEBUG: Message sent to partition {record_metadata.partition} offset {record_metadata.offset}")

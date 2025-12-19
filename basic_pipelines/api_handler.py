@@ -11,21 +11,18 @@ class APIHandler:
     """Handles API-related operations including S3 uploads and form submissions."""
 
     def __init__(self, executor: ThreadPoolExecutor, 
-                 upload_to_s3_safe: Callable,
-                 get_api_s3_url: Callable,
+                 upload_to_s3_safe: Callable[[bytes, str, bool], Optional[Dict[str, str]]],
                  config: Optional[Dict[str, Any]] = None):
         """
         Initialize API Handler.
         
         Args:
             executor: ThreadPoolExecutor for parallel uploads
-            upload_to_s3_safe: Function to upload files to S3 (signature: (bytes, str, bool) -> Optional[str])
-            get_api_s3_url: Function to get API S3 URL (signature: (str, str) -> Optional[str])
+            upload_to_s3_safe: Function to upload files to S3 (returns dict with filename/url)
             config: Optional configuration dictionary
         """
         self.executor = executor
         self.upload_to_s3_safe = upload_to_s3_safe
-        self.get_api_s3_url = get_api_s3_url
         self.config = config or {}
 
     def _extract_category_subcategory(self, message: Dict[str, Any]) -> Tuple[str, str]:
@@ -110,19 +107,24 @@ class APIHandler:
                     api_uploads[key] = None
 
             # Check if labelled image upload succeeded
-            if not api_uploads.get("labelled_img"):
+            labelled = api_uploads.get("labelled_img") or {}
+            if not labelled or not labelled.get("filename"):
                 print("DEBUG: Labelled image upload failed, skipping API submission")
                 return False
 
             # Get uploaded filenames
-            image_filename = api_uploads.get("org_img")
-            labelled_image_filename = api_uploads.get("labelled_img")
-            video_filename = api_uploads.get("video")
+            image_info = api_uploads.get("org_img") or {}
+            labelled_info = labelled
+            video_info = api_uploads.get("video") or {}
 
-            # Construct full URLs from API S3 configs
-            image_s3_url = self.get_api_s3_url(image_filename, "image") if image_filename else ""
-            labelled_image_s3_url = self.get_api_s3_url(labelled_image_filename, "image") if labelled_image_filename else ""
-            video_s3_url = self.get_api_s3_url(video_filename, "video") if video_filename else ""
+            image_filename = image_info.get("filename")
+            labelled_image_filename = labelled_info.get("filename")
+            video_filename = video_info.get("filename")
+
+            # Use URLs from upload results (ensures correct bucket/endpoint)
+            image_s3_url = image_info.get("url", "")
+            labelled_image_s3_url = labelled_info.get("url", "")
+            video_s3_url = video_info.get("url", "")
 
             # Update message with filename
             message["org_img"] = image_filename

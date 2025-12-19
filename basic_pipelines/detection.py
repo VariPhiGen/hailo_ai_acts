@@ -218,11 +218,8 @@ class user_app_callback_class(app_callback_class):
             "video": video_bytes,  # Video bytes ready before queuing
             "absolute_bbox": [{"xywh": xywh,"subcategory":subcategory, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status}],
             "datetimestamp": datetimestamp,
-            "imgsz": f"{width}:{height}",
-            "color": "#FFFF00"
+            "imgsz": f"{width}:{height}"
         }
-        
-        #API Calling
 
         # Queue message with complete data
         if user_data.api_mode==1 or user_data.kafka_mode==1:
