@@ -22,7 +22,7 @@ Installs Python deps and local tools.
 
 3) Download required resources (models, etc.)  
 ```
-bash download_resources.sh or bash download_hailo8l.sh
+bash download_hailo8l.sh
 ```
 Fetches required models/resources.
 

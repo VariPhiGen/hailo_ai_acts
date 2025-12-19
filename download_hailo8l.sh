@@ -11,6 +11,8 @@ mkdir -p "$TARGET_DIR"
 
 # List of Hailo-8L model URLs
 H8L_HEFS=(
+  "https://variphi.s3.ap-south-1.amazonaws.com/hailo-model/base.hef"
+  "https://variphi.s3.ap-south-1.amazonaws.com/hailo-model/ppe-labels.json"
   "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/yolov5m_wo_spp.hef"
   "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/yolov8m.hef"
   "https://hailo-model-zoo.s3.eu-west-2.amazonaws.com/ModelZoo/Compiled/v2.14.0/hailo8l/yolov11n.hef"
