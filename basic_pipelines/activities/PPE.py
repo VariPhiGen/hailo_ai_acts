@@ -64,7 +64,7 @@ class PPE:
                 if person_detection_score < 0.7:
                     continue
                 for zone_name, zone_polygon in self.zone_data.items():
-                    if is_bottom_in_zone(anchor, zone_polygon):
+                    #if is_bottom_in_zone(anchor, zone_polygon):
                         person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
                         for ppe_idx in ppe_indices:
                             ppe_box=self.parent.detection_boxes[ppe_idx]
