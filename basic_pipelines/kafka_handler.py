@@ -549,11 +549,16 @@ class KafkaHandler:
                     }
 
 
+                    topic_str = str(topic) if topic is not None else ""
+                    if not topic_str:
+                        print("DEBUG: Kafka topic is empty or invalid, skipping message")
+                        return False
+
                     if not self._ensure_kafka_pipeline():
                         print("DEBUG: Kafka pipeline unavailable, skipping message")
                         return False
                     try:
-                        future = self.kafka_pipeline.send(topic, message_out)
+                        future = self.kafka_pipeline.send(topic_str, message_out)
                         record_metadata = future.get(timeout=10)
                         self._smart_flush()
                         #print(f"DEBUG: Message sent to partition {record_metadata.partition} offset {record_metadata.offset}")

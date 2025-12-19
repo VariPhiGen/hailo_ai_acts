@@ -7,7 +7,7 @@ from shapely.geometry import Point, Polygon
 from typing import List, Tuple, Dict, Any, Optional
 
 
-def make_labelled_image(message,event_category,event_subcategory):
+def make_labelled_image(message, event_category=None, event_subcategory=None):
         # Decode bytes → numpy image
         nparr = np.frombuffer(message["org_img"], np.uint8)
         org_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -16,13 +16,10 @@ def make_labelled_image(message,event_category,event_subcategory):
 
         # Parse image size (W:H)
         width, height = map(int, message["imgsz"].split(":"))
-        #print(width,height)
 
         # Draw all bounding boxes
         for bbox in message["absolute_bbox"]:
             x_pct, y_pct, w_pct, h_pct = map(float, bbox["xywh"])
-            
-            #print(bbox["xywh"])
 
             # Convert percentages to pixel values
             x_center = int(x_pct * width/100)
@@ -35,17 +32,19 @@ def make_labelled_image(message,event_category,event_subcategory):
             y1 = int(y_center)
             x2 = int(x_center + w)
             y2 = int(y_center + h)
-            #print(x1,y1,x2,y2,"These are cordinate")
 
-            # Convert HEX color → BGR
-            color_hex = message["color"].lstrip("#")
+            # Pick color: prefer bbox color, then message color, else default
+            color_hex = (bbox.get("color") or message.get("color") or "#FF0000").lstrip("#")
+            if len(color_hex) != 6:
+                color_hex = "FF0000"
             bgr = tuple(int(color_hex[i:i+2], 16) for i in (4, 2, 0))
 
             # Draw bbox
             cv2.rectangle(org_img, (x1, y1), (x2, y2), bgr, 2)
 
             # Label text
-            label = f"{event_subcategory} {bbox['confidence']:.2f}"
+            subcat = event_subcategory or bbox.get("class_name") or ""
+            label = f"{subcat} {bbox.get('confidence', 0):.2f}"
             cv2.putText(org_img, label, (x1, max(0, y1-5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr, 2, cv2.LINE_AA)
 
@@ -53,7 +52,7 @@ def make_labelled_image(message,event_category,event_subcategory):
         success, buffer = cv2.imencode(".jpg", org_img)
         if not success:
             raise ValueError("Could not encode labelled image")
-        print( " Success Fully Labelled")
+        print("Success Fully Labelled")
         return buffer.tobytes()
 
 def setup_logging():

@@ -218,7 +218,8 @@ class user_app_callback_class(app_callback_class):
             "video": video_bytes,  # Video bytes ready before queuing
             "absolute_bbox": [{"xywh": xywh,"subcategory":subcategory, "class_name": class_name, "confidence": confidence, "parameters": parameters, "anpr": anpr_status}],
             "datetimestamp": datetimestamp,
-            "imgsz": f"{width}:{height}"
+            "imgsz": f"{width}:{height}",
+            "color": "#FF0000"
         }
 
         # Queue message with complete data
@@ -594,10 +595,10 @@ if __name__ == "__main__":
     if os.getenv("BROKER_SECONDARY"):
         kafka_vars["secondary_broker"] = os.getenv("BROKER_SECONDARY")
     if os.getenv("BROKER_PRIMARY") or os.getenv("BROKER_SECONDARY"):
-        kafka_vars["broker_failover_timeout"]= int(os.getenv("BROKER_FAILOVER_TIMEOUT", 30)),
-        kafka_vars["send_analytics_pipeline"]= os.getenv("SEND_ANALYTICS_PIPELINE", "variphianalytics"),
-        kafka_vars["send_events_pipeline"]= os.getenv("SEND_EVENTS_PIPELINE", "variphievents"),
-        kafka_vars["log_topic"]= os.getenv("LOG_TOPIC", "error_log")
+        kafka_vars["broker_failover_timeout"] = int(os.getenv("BROKER_FAILOVER_TIMEOUT", 30))
+        kafka_vars["send_analytics_pipeline"] = os.getenv("SEND_ANALYTICS_PIPELINE", "variphianalytics")
+        kafka_vars["send_events_pipeline"] = os.getenv("SEND_EVENTS_PIPELINE", "variphievents")
+        kafka_vars["log_topic"] = os.getenv("LOG_TOPIC", "error_log")
 
     # AWS S3 overrides (primary / secondary)
     s3 = kafka_vars.get("AWS_S3", {})
@@ -653,8 +654,8 @@ if __name__ == "__main__":
         s3["api_secondary"]["video_fn"] = _env("API_AWS_SECONDARY_VIDEO_FN", "API_AWS_SECONDARY_VIDEO_PATH", default="videoclips/")
         s3["api_secondary"]["cgi_fn"] = _env("API_AWS_SECONDARY_CGI_FN", "API_AWS_SECONDARY_CGI_PATH", default="cgisnapshots/")
     
-    s3["s3_failover_timeout"]= int(os.getenv("S3_FAILOVER_TIMEOUT", 30)),
-    s3["upload_retries"]= int(os.getenv("S3_UPLOAD_RETRIES", 3))
+    s3["s3_failover_timeout"] = int(os.getenv("S3_FAILOVER_TIMEOUT", 30))
+    s3["upload_retries"] = int(os.getenv("S3_UPLOAD_RETRIES", 3))
 
     kafka_vars["AWS_S3"] = s3
     config["kafka_variables"] = kafka_vars
