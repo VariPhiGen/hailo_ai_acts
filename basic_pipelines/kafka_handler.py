@@ -508,11 +508,28 @@ class KafkaHandler:
 
                 
             if message["org_img"] is not None:
+                absolute_bbox = message.get("absolute_bbox") or []
+                # Support both list and single-dict shapes
+                if isinstance(absolute_bbox, dict):
+                    confidence_values = [absolute_bbox.get("confidence", 0)]
+                else:
+                    confidence_values = [
+                        bbox.get("confidence", 0)
+                        for bbox in absolute_bbox
+                        if isinstance(bbox, dict)
+                    ]
+                max_confidence = max(confidence_values) if confidence_values else 0
+
                 if api_m:
-                    # Use API Handler to process and submit
-                    self.api_handler.process_and_submit(message, topic)
+                    if max_confidence >= 0.85:
+                        self.api_handler.process_and_submit(message, topic)
+                    else:
+                        print(f"DEBUG: Skipping API submission, confidence too low ({max_confidence:.2f})")
                 
                 if kafka_m:
+                    if not (0.7 <= max_confidence < 0.85):
+                        print(f"DEBUG: Skipping Kafka submission, confidence {max_confidence:.2f} outside 0.70-0.90")
+                        return True
                     image_bytes = message.get("org_img")
                     snap_shot_bytes = message.get("snap_shot")
                     video_bytes = message.get("video")
