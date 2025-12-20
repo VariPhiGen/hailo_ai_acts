@@ -188,14 +188,14 @@ class user_app_callback_class(app_callback_class):
         
         # Generate video bytes first (with timeout)
         video_bytes = None
-        if hasattr(self, 'take_video') and self.recorder is not None:
+        if hasattr(self, 'take_video') and self.take_video and self.recorder is not None:
             try:
                 video_bytes = await asyncio.wait_for(
                     self.main_loop.run_in_executor(
                         self.thread_pool,
                         self.recorder.generate_video_bytes
                     ),
-                    timeout=10.0  # 10-second timeout
+                    timeout=20.0  # 10-second timeout
                 )
             except asyncio.TimeoutError:
                 pass  # Continue without video if timeout
