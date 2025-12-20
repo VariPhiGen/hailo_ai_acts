@@ -11,7 +11,7 @@ cat > "$TARGET" <<EOF
     "labels-json": "$HOME/hailo_ai_acts/resources/models/hailo8l/ppe-labels.json"
   },
   "dashboard_connectivity":{
-    "api":0,
+    "api":1,
     "kafka":1
   },
   "available_activities": [
@@ -127,7 +127,7 @@ cat > "$TARGET" <<EOF
     "save_snapshots": 0,
     "save_rtsp_images": 0,
     "take_cgi_snapshots": 0,
-    "take_video":0
+    "take_video":1
   },
   "calibration_required": 1
 }

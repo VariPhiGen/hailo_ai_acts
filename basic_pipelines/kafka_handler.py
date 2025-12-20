@@ -104,6 +104,18 @@ class KafkaHandler:
         )
 
     # ------------------------- Setup helpers -------------------------
+    def _extract_category_subcategory(self, message: Dict[str, Any]) -> Tuple[str, str]:
+        """Extract event category and subcategory from message."""
+        try:
+            subcategory_full = message["absolute_bbox"][0]["subcategory"]
+            parts = subcategory_full.split("-", 1)
+            event_category = parts[0] if len(parts) > 0 else subcategory_full
+            event_subcategory = parts[1] if len(parts) > 1 else ""
+            return event_category, event_subcategory
+        except (KeyError, IndexError, AttributeError) as e:
+            print(f"DEBUG: Error extracting category/subcategory: {e}")
+            return "Unknown", ""
+        
     def _get_broker_list(self) -> List[str]:
         kafka_config = self.config.get("kafka_variables", {})
         bootstrap_servers = kafka_config.get("bootstrap_servers")
@@ -137,6 +149,7 @@ class KafkaHandler:
         if "api_secondary" in aws_config:
             api_s3_configs["api_secondary"] = aws_config["api_secondary"]
         return api_s3_configs
+        
 
     def _setup_aws_s3(self):
         # Setup normal S3 clients
