@@ -16,6 +16,7 @@ from video_clipper import VideoClipRecorder
 import cv2
 import numpy as np
 from api_handler import APIHandler
+from helper_utils import make_labelled_image
 
 # --- Optional Kafka dependency ---
 # This project can run in API-only mode (no Kafka). Import kafka-python lazily/optionally so
@@ -505,10 +506,6 @@ class KafkaHandler:
             if message is None or topic == "None":
                 return True
 
-            image_bytes = message.get("org_img")
-            snap_shot_bytes = message.get("snap_shot")
-            video_bytes = message.get("video")
-
                 
             if message["org_img"] is not None:
                 if api_m:
@@ -516,9 +513,21 @@ class KafkaHandler:
                     self.api_handler.process_and_submit(message, topic)
                 
                 if kafka_m:
+                    image_bytes = message.get("org_img")
+                    snap_shot_bytes = message.get("snap_shot")
+                    video_bytes = message.get("video")
+                    # Extract category and subcategory
+                    event_category, event_subcategory = self._extract_category_subcategory(message)
+
+                    if not image_bytes:
+                        print("DEBUG: No image bytes in message, skipping API submission")
+                        return False
+
+                    # Create labelled image first (needed before parallel uploads)
+                    labelled_image_bytes = make_labelled_image(message,event_category,event_subcategory)
                     uploads = {}
                     futures = {
-                        self.executor.submit(self.upload_to_s3_safe, image_bytes, "image", False): "org_img",
+                        self.executor.submit(self.upload_to_s3_safe, labelled_image_bytes, "image", False): "org_img",
                         self.executor.submit(self.upload_to_s3_safe, snap_shot_bytes, "snapshot", False): "snap_shot",
                         self.executor.submit(self.upload_to_s3_safe, video_bytes, "video", False): "video"
                     }
