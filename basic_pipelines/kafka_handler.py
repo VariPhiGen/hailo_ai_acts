@@ -541,7 +541,7 @@ class KafkaHandler:
                 
                 if kafka_m:
                     if not (0.7 <= max_confidence < 0.85):
-                        print(f"DEBUG: Skipping Kafka submission, confidence {max_confidence:.2f} outside 0.70-0.90")
+                        print(f"DEBUG: Skipping Kafka submission, confidence {max_confidence:.2f} outside 0.70-0.85")
                         return True
                     image_bytes = message.get("org_img")
                     snap_shot_bytes = message.get("snap_shot")
