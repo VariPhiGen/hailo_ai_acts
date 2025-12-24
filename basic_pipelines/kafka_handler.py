@@ -423,6 +423,7 @@ class KafkaHandler:
             endpoint = config.get("end_point_url")
             key_prefix = config.get('org_img_fn', '') if file_type == "image" else config.get('cgi_fn', '')
             video_prefix = config.get('video_fn', '')
+            object_key = f"{video_prefix}{unique_filename}" if file_type == "video" else f"{key_prefix}{unique_filename}"
 
             for attempt in range(upload_retries):
                 try:
@@ -430,21 +431,21 @@ class KafkaHandler:
                         client.upload_fileobj(
                             io.BytesIO(file_bytes),
                             Bucket=config.get("BUCKET_NAME"),
-                            Key=f"{video_prefix}{unique_filename}",
+                            Key=object_key,
                             ExtraArgs={"ContentType": content_type},
                             Config=S3_TRANSFER_CONFIG,
                         )
                         url = self._build_s3_url(config, unique_filename, "video")
-                        return {"filename": unique_filename, "url": url}
+                        return {"filename": unique_filename, "url": url, "key": object_key}
                     else:
                         client.put_object(
                             Bucket=bucket,
-                            Key=f"{key_prefix}{unique_filename}",
+                            Key=object_key,
                             Body=file_bytes,
                             ContentType=content_type,
                         )
                         url = self._build_s3_url(config, unique_filename, file_type)
-                        return {"filename": unique_filename, "url": url}
+                        return {"filename": unique_filename, "url": url, "key": object_key}
                 except Exception as e:
                     print(
                         f"DEBUG: S3 {file_type} upload attempt {attempt + 1} to {s3_name} "
@@ -573,12 +574,14 @@ class KafkaHandler:
                     org_img_info = uploads.get("org_img") or {}
                     snap_shot_info = uploads.get("snap_shot") or {}
                     video_info = uploads.get("video") or {}
+                    org_img_key = org_img_info.get("key") or org_img_info.get("filename")
+                    video_key = video_info.get("key") or video_info.get("filename")
 
                     message_out = {
                         "sensor_id": message.get("sensor_id"),
                         "org_img": org_img_info.get("url"),
-                        "org_img_local": org_img_info.get("filename"),
-                        "video_url": video_info.get("filename"),
+                        "org_img_local": org_img_key,
+                        "video_url": video_key,
                         "topic": "arresto_event_produce2",
                         "absolute_bbox": message.get("absolute_bbox"),
                         "datetimestamp_trackerid": message.get("datetimestamp"),

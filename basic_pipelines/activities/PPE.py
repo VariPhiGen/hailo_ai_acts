@@ -92,7 +92,21 @@ class PPE:
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
                                         xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
-                                        datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
+                                        ############################################################
+                                        now_ist = datetime.now(self.timezone)  # current IST time, tz-aware
+                                        # IST offset is +5:30
+                                        offset = now_ist.utcoffset()  # should be timedelta(hours=5, minutes=30)
+
+                                        # Subtract the offset to get a "fake UTC" datetime whose wall time matches IST
+                                        fake_utc = now_ist
+
+                                        # Make it timezone aware UTC
+                                        fake_utc = fake_utc.replace(tzinfo=pytz.utc)
+                                        date = fake_utc.isoformat()
+                                        datetimestamp=f"{date}"
+                                        # datetimestamp_trackerid=f"{datetime.now(self.ist_timezone).isoformat()}_{tracker_id}"
+                                        ############################################################
+                                        #datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
                                         subcategory=ppe_objects[ppe_obj_class]
                                         # Use parent's event creator
                                         self.parent.create_result_events(
