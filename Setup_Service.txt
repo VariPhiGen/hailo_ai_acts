@@ -1,3 +1,4 @@
+Yes Bro
 # SVDS System Setup Guide
 
 A comprehensive step-by-step guide for setting up the Variphi SVDS (Smart Video Detection System) on Raspberry Pi 5 with Hailo AI hardware.
