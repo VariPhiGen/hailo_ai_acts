@@ -41,6 +41,7 @@ Attempts common fixes; rerun your test after this if needed.
 
 5) AI environment setup  
 ```
+bash setup_ota_env.sh
 bash setup_ai_env.sh
 ```
 Sets up additional AI environment pieces.

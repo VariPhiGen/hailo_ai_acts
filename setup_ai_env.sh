@@ -31,6 +31,8 @@ declare -A KV=(
   [API_POST_URL]="https://5200001-api.arresto.io/api/client/1825/mfb/forms_data"
   [S3_FAILOVER_TIMEOUT]="30"
   [S3_UPLOAD_RETRIES]="3"
+  [WS_SERVER_URL]="ws://54.210.59.224:8000/ws"
+  [LOG_LEVEL]="INFO"
 )
 
 touch "$ENV_FILE"

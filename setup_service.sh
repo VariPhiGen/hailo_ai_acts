@@ -11,12 +11,16 @@ set -euo pipefail
 
 SERVICE_NAME="acts-detection"
 REBOOT_SERVICE_NAME="acts-reboot"
+OTA_SERVICE_NAME="edge-ota"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DETECTION_SCRIPT="$SCRIPT_DIR/run_detection.sh"
+OTA_SCRIPT="$SCRIPT_DIR/run_ota.sh"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 REBOOT_SERVICE_FILE="/etc/systemd/system/${REBOOT_SERVICE_NAME}.service"
+OTA_SERVICE_FILE="/etc/systemd/system/${OTA_SERVICE_NAME}.service"
 REBOOT_SCRIPT="$SCRIPT_DIR/reboot_system.sh"
 LOG_FILE="/var/log/acts-detection.log"
+OTA_LOG_FILE="/var/log/edge-ota.log"
 LOGROTATE_CONF="/etc/logrotate.d/acts-detection"
 
 # Run as root
@@ -41,10 +45,22 @@ if [[ ! -f "$DETECTION_SCRIPT" ]]; then
 fi
 chmod +x "$DETECTION_SCRIPT"
 
+# Ensure OTA runner exists
+if [[ ! -f "$OTA_SCRIPT" ]]; then
+    echo "❌ Error: run_ota.sh not found in $SCRIPT_DIR"
+    exit 1
+fi
+chmod +x "$OTA_SCRIPT"
+
 # --- Create log file ---
 touch "$LOG_FILE"
 chown "$RUN_USER":"$RUN_USER" "$LOG_FILE"
 chmod 664 "$LOG_FILE"
+
+# --- OTA log file ---
+touch "$OTA_LOG_FILE"
+chown "$RUN_USER":"$RUN_USER" "$OTA_LOG_FILE"
+chmod 664 "$OTA_LOG_FILE"
 
 # --- Reboot script ---
 cat > "$REBOOT_SCRIPT" << 'EOF'
@@ -73,6 +89,28 @@ RestartSec=30
 RuntimeMaxSec=21600
 StandardOutput=append:$LOG_FILE
 StandardError=append:$LOG_FILE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- OTA service ---
+cat > "$OTA_SERVICE_FILE" <<EOF
+[Unit]
+Description=edge OTA Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$SCRIPT_DIR
+ExecStart=$OTA_SCRIPT
+Restart=always
+RestartSec=30
+RuntimeMaxSec=21600
+StandardOutput=append:$OTA_LOG_FILE
+StandardError=append:$OTA_LOG_FILE
 
 [Install]
 WantedBy=multi-user.target
@@ -109,14 +147,23 @@ $LOG_FILE {
     notifempty
     copytruncate
 }
+$OTA_LOG_FILE {
+    size 20M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
 EOF
 
 # --- Enable and start services ---
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" "$REBOOT_SERVICE_NAME"
-systemctl restart "$SERVICE_NAME" "$REBOOT_SERVICE_NAME"
+systemctl enable "$SERVICE_NAME" "$REBOOT_SERVICE_NAME" "$OTA_SERVICE_NAME"
+systemctl restart "$SERVICE_NAME" "$REBOOT_SERVICE_NAME" "$OTA_SERVICE_NAME"
 
 echo "✅ Setup complete!"
 echo "  - Service: $SERVICE_NAME (logs in $LOG_FILE)"
+echo "  - Service: $OTA_SERVICE_NAME (logs in $OTA_LOG_FILE)"
 echo "  - Service: $REBOOT_SERVICE_NAME (auto reboot every 24h)"
 echo "  - Logrotate rule: $LOGROTATE_CONF"

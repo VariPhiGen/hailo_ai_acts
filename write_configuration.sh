@@ -7,8 +7,8 @@ cat > "$TARGET" <<EOF
 {
   "sensor_id": "SENSOR_ID_PLACEHOLDER",
   "default_arguments": {
-    "hef_path": "$HOME/hailo_ai_acts/resources/models/hailo8l/base.hef",
-    "labels-json": "$HOME/hailo_ai_acts/resources/models/hailo8l/ppe-labels.json"
+    "hef_path": "$HOME/hailo_ai_acts/resources/models/hailo8l/model.hef",
+    "labels-json": "$HOME/hailo_ai_acts/resources/models/hailo8l/labels.json"
   },
   "dashboard_connectivity":{
     "api":1,
