@@ -49,7 +49,7 @@ def get_device_info() -> Dict:
     }
 
 def download_file(url: str, dst: str):
-    r = requests.get(url, stream=True, timeout=60)
+    r = requests.get(url, stream=True)
     r.raise_for_status()
     with open(dst, "wb") as f:
         for chunk in r.iter_content(8192):
