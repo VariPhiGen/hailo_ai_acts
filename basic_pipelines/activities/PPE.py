@@ -31,12 +31,14 @@ class PPE:
                     if not success:
                         print("⚠️ Relay device not available. Continuing without relay control.")
                         self.relay = None
-                        return
-                self.relay=self.parent.relay_handler
-                self.switch_relay=parameters["switch_relay"]
+                else:
+                    self.relay=self.parent.relay_handler
+                    self.switch_relay=parameters["switch_relay"]
             except Exception as e:
                 print(f"⚠️ Relay initialization failed: {e}. Continuing without relay control.")
                 self.relay = None
+        else:
+            self.relay = None
 
         # Initiating Zone wise
         for zone_name in zone_data.keys():

@@ -67,7 +67,13 @@ class Relay(object):
             print("   - Device not physically connected")
             print("   - Device already in use by another process")
             print("   - Wrong vendor/product ID")
-            print(f"   - USB permissions issue (try: sudo chmod 666 /dev/hidraw*)")
+            print("   - USB permissions issue")
+            print("")
+            print("   🔧 Quick fixes to try:")
+            print("   1. Run: sudo chmod 666 /dev/hidraw*")
+            print("   2. Run: ./rpi_relay_fix.sh (then logout/login)")
+            print("   3. Try: sudo python3 test_relay.py")
+            print("   4. Or disable relay: set 'relay': 0 in config.json")
             return False
         except Exception as e:
             print(f"❌ Failed to initialize relay: {e}")
