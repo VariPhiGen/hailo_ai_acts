@@ -1,6 +1,7 @@
 import hid
 import atexit
 import time
+import os
 
 """
 This Relay object uses the HID library instead of usb. 
@@ -24,12 +25,13 @@ https://github.com/trezor/cython-hidapi/blob/6057d41b5a2552a70ff7117a9d19fc21bf8
 class Relay(object):
     """Relay Controller using HID interface"""
 
-    def __init__(self, idVendor=0x16c0, idProduct=0x05df):
+    def __init__(self, idVendor=0x16c0, idProduct=0x05df, device_path=None):
         self.start_time = {i: 0 for i in range(1, 9)}
         self.auto_off_sec=3
 
         self.vendor_id = idVendor
         self.product_id = idProduct
+        self.device_path = device_path or f"/dev/relay_device"  # Use symlink if available
         self.device = None
 
     def initiate_relay(self):
@@ -37,7 +39,19 @@ class Relay(object):
             print(f"🔌 Attempting to open relay device: Vendor={hex(self.vendor_id)}, Product={hex(self.product_id)}")
 
             self.device = hid.device()
-            self.device.open(self.vendor_id, self.product_id)
+
+            # First try to open via symlink (predictable path)
+            try:
+                if os.path.exists(self.device_path):
+                    print(f"📍 Using relay symlink: {self.device_path}")
+                    # For symlinks, we still need to open by VID/PID
+                    self.device.open(self.vendor_id, self.product_id)
+                else:
+                    print(f"📍 Symlink not found, using direct enumeration")
+                    self.device.open(self.vendor_id, self.product_id)
+            except Exception as symlink_error:
+                print(f"⚠️ Symlink access failed, trying direct enumeration: {symlink_error}")
+                self.device.open(self.vendor_id, self.product_id)
             self.device.set_nonblocking(1)
 
             # Verify device is actually open by trying to get manufacturer string

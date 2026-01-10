@@ -27,8 +27,11 @@ sudo apt install -y \
     python3 \
     python3-pip \
     python3-venv \
+    python3-dev \
     python3-gi \
     python3-gi-cairo \
+    libusb-1.0-0-dev \
+    libudev-dev \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
@@ -36,7 +39,9 @@ sudo apt install -y \
     gstreamer1.0-plugins-ugly \
     git \
     curl \
-    wget
+    wget \
+    build-essential \
+    jq
 
 # =============================================================================
 # 3. Install Hailo Packages
@@ -112,8 +117,16 @@ EOF
 
 # Create udev rules for relay devices
 cat << 'EOF' | sudo tee /etc/udev/rules.d/99-relay.rules
-# Relay device rules
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", MODE="0666", SYMLINK+="relay_device"
+# USB Relay device rules - Multiple vendor support
+# V-USB relays (common open-source)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", MODE="0666", GROUP="plugdev", SYMLINK+="relay_device"
+# Microchip USB relays
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="f5fe", MODE="0666", GROUP="plugdev"
+# Generic HID devices (for compatibility)
+SUBSYSTEM=="hidraw", MODE="0666", GROUP="plugdev"
+# USB subsystem rules for relay devices
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="f5fe", MODE="0666", GROUP="plugdev"
 EOF
 
 
@@ -121,10 +134,10 @@ EOF
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 
-# Add user to video and dialout groups for device access
-sudo usermod -a -G video,dialout $USER
+# Add user to necessary groups for device access
+sudo usermod -a -G video,dialout,plugdev,gpio,i2c,spi $USER
 
-echo "✅ Device access configured (Radar)"
+echo "✅ Device access configured (Radar, Relay, GPIO)"
 
 # =============================================================================
 # 6. Verification
@@ -156,8 +169,31 @@ fi
 # Check Python
 if command -v python3 &> /dev/null; then
     echo "✅ Python3 available"
+
+    # Check if pip can install hidapi
+    if python3 -c "import pip" &> /dev/null; then
+        echo "💡 Tip: Install HID library for USB relay support:"
+        echo "   pip3 install hidapi"
+    fi
 else
     echo "❌ Python3 not found"
+fi
+
+# Check USB/HID device access
+echo ""
+echo "🔌 Checking USB device access..."
+if ls /dev/hidraw* 1> /dev/null 2>&1; then
+    echo "✅ HID devices found: $(ls /dev/hidraw* | wc -l) device(s)"
+    ls -la /dev/hidraw* | head -3
+else
+    echo "ℹ️  No HID devices currently connected (normal if relay not plugged in)"
+fi
+
+# Check user groups for device access
+if groups $USER | grep -q -E "(dialout|plugdev)"; then
+    echo "✅ User has USB device access groups"
+else
+    echo "⚠️  User may need additional groups for USB device access"
 fi
 
 # =============================================================================
