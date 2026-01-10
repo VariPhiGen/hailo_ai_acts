@@ -97,6 +97,7 @@ class PPE:
                                                 if (index) not in true_indexes:
                                                     self.relay.state(index, on=True)
                                                 self.relay.start_time[index]=time.time()
+                                                print("Changed the Index")
                                         except Exception as e:
                                             print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
