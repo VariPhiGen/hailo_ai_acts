@@ -58,16 +58,21 @@ class Relay(object):
             # Return cached state (since reading is unreliable)
             return self.state_cache if relay == 0 else self.state_cache[relay]
 
-        if relay == 0:
-            self.device.write([0x00, 0xFE] if on else [0x00, 0xFC])
-            for i in self.state_cache:
-                self.state_cache[i] = on
-        else:
-            self.device.write([0x00, 0xFF, relay] if on else [0x00, 0xFD, relay])
-            self.state_cache[relay] = on
+        try:
+            if relay == 0:
+                self.device.write([0x00, 0xFE] if on else [0x00, 0xFC])
+                for i in self.state_cache:
+                    self.state_cache[i] = on
+            else:
+                self.device.write([0x00, 0xFF, relay] if on else [0x00, 0xFD, relay])
+                self.state_cache[relay] = on
 
-        if on and relay != 0:
-            self.start_time[relay] = time.time()
+            if on and relay != 0:
+                self.start_time[relay] = time.time()
+
+        except Exception as e:
+            print(f"⚠️ Relay write failed: {e}")
+            raise
 
     # -----------------------------
     # AUTO-OFF (UNCHANGED)
