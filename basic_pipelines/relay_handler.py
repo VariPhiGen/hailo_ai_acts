@@ -34,17 +34,44 @@ class Relay(object):
 
     def initiate_relay(self):
         try:
+            print(f"🔌 Attempting to open relay device: Vendor={hex(self.vendor_id)}, Product={hex(self.product_id)}")
+
             self.device = hid.device()
             self.device.open(self.vendor_id, self.product_id)
             self.device.set_nonblocking(1)
-            print(f"✅ Relay initialized: Vendor={hex(self.vendor_id)}, Product={hex(self.product_id)}")
+
+            # Verify device is actually open by trying to get manufacturer string
+            try:
+                manufacturer = self.device.get_manufacturer_string()
+                product = self.device.get_product_string()
+                print(f"✅ Relay initialized successfully!")
+                print(f"   Manufacturer: {manufacturer}")
+                print(f"   Product: {product}")
+                print(f"   Vendor ID: {hex(self.vendor_id)}, Product ID: {hex(self.product_id)}")
+            except Exception as info_e:
+                print(f"⚠️ Relay opened but info query failed: {info_e}")
+                print("   Device may be functional despite this warning.")
 
             # Register cleanup on program exit
             atexit.register(self.cleanup)
             return True
 
+        except PermissionError as e:
+            print(f"❌ Permission denied accessing relay device: {e}")
+            print("   Try running with sudo or check USB permissions")
+            print("   On Linux: sudo usermod -a -G dialout,plugdev $USER && logout/login")
+            return False
+        except OSError as e:
+            print(f"❌ OS error accessing relay device: {e}")
+            print("   Possible causes:")
+            print("   - Device not physically connected")
+            print("   - Device already in use by another process")
+            print("   - Wrong vendor/product ID")
+            print(f"   - USB permissions issue (try: sudo chmod 666 /dev/hidraw*)")
+            return False
         except Exception as e:
             print(f"❌ Failed to initialize relay: {e}")
+            print("   This could be a driver or library issue")
             return False
 
     def cleanup(self):

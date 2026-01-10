@@ -27,10 +27,15 @@ class PPE:
         if parameters["relay"]==1:
             try:
                 if self.parent.relay_handler.device==None:
-                    self.parent.relay_handler.initiate_relay()
+                    success = self.parent.relay_handler.initiate_relay()
+                    if not success:
+                        print("⚠️ Relay device not available. Continuing without relay control.")
+                        self.relay = None
+                        return
                 self.relay=self.parent.relay_handler
                 self.switch_relay=parameters["switch_relay"]
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Relay initialization failed: {e}. Continuing without relay control.")
                 self.relay = None
 
         # Initiating Zone wise
@@ -50,10 +55,10 @@ class PPE:
     def run(self):
         #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
+            self.parameters["last_check_time"]=time.time()
             ppe_objects=self.parameters["subcategory_mapping"]
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             ppe_indices = [i for i, cls in enumerate(self.parent.classes) if cls in ppe_objects.keys()]
-            self.parameters["last_check_time"]=time.time()
 
             for idx in person_indices:
                 box=self.parent.detection_boxes[idx]
@@ -83,12 +88,15 @@ class PPE:
 
                                 if self.running_data[zone_name][tracker_id][ppe_obj_class] > self.parameters["frame_accuracy"]:
                                     if self.relay!=None and self.parameters["relay"]==1:
-                                        status=self.relay.state(0)
-                                        true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
-                                        for index in self.switch_relay:
-                                            if (index) not in true_indexes:
-                                                self.relay.state(index, on=True)
-                                            self.relay.start_time[index]=time.time()
+                                        try:
+                                            status=self.relay.state(0)
+                                            true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
+                                            for index in self.switch_relay:
+                                                if (index) not in true_indexes:
+                                                    self.relay.state(index, on=True)
+                                                self.relay.start_time[index]=time.time()
+                                        except Exception as e:
+                                            print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
                                         xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)

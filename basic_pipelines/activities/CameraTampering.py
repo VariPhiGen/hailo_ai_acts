@@ -25,10 +25,15 @@ class CameraTampering:
         if parameters["relay"]==1:
             try:
                 if self.parent.relay_handler.device==None:
-                    self.parent.relay_handler.initiate_relay()
+                    success = self.parent.relay_handler.initiate_relay()
+                    if not success:
+                        print("⚠️ Relay device not available. Continuing without relay control.")
+                        self.relay = None
+                        return
                 self.relay=self.parent.relay_handler
                 self.switch_relay=parameters["switch_relay"]
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Relay initialization failed: {e}. Continuing without relay control.")
                 self.relay = None
 
         # Initiating Zone wise

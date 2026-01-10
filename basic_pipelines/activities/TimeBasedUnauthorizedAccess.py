@@ -22,10 +22,15 @@ class TimeBasedUnauthorizedAccess:
         if parameters["relay"]==1:
             try:
                 if self.parent.relay_handler.device==None:
-                    self.parent.relay_handler.initiate_relay()
+                    success = self.parent.relay_handler.initiate_relay()
+                    if not success:
+                        print("⚠️ Relay device not available. Continuing without relay control.")
+                        self.relay = None
+                        return
                 self.relay=self.parent.relay_handler
                 self.switch_relay=parameters["switch_relay"]
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Relay initialization failed: {e}. Continuing without relay control.")
                 self.relay = None
 
         self.last_check_time = self.parameters.get("last_check_time", 0)
@@ -82,12 +87,15 @@ class TimeBasedUnauthorizedAccess:
 
                                     if self.running_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
                                         if self.relay!=None and self.parameters["relay"]==1:
-                                            status=self.relay.state(0)
-                                            true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
-                                            for index in self.switch_relay:
-                                                if (index) not in true_indexes:
-                                                    self.relay.state(index, on=True)
-                                                self.relay.start_time[index]=time.time()
+                                            try:
+                                                status=self.relay.state(0)
+                                                true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
+                                                for index in self.switch_relay:
+                                                    if (index) not in true_indexes:
+                                                        self.relay.state(index, on=True)
+                                                    self.relay.start_time[index]=time.time()
+                                            except Exception as e:
+                                                print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
                                         if tracker_id not in self.violation_id_data:
                                             self.violation_id_data.append(tracker_id)
                                             xywh=xywh_original_percentage(box)
