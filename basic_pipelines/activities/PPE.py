@@ -23,6 +23,9 @@ class PPE:
         self.relay = None
         self.switch_relay = []
 
+        # Pre-evaluate zone check setting (only checked once at startup)
+        self.zone_check_enabled = self.parameters.get("no_zone", 0) != 1
+
         #Initialize Relay
         if parameters["relay"]==1:
             try:
@@ -71,7 +74,13 @@ class PPE:
                 if person_detection_score < 0.7:
                     continue
                 for zone_name, zone_polygon in self.zone_data.items():
-                    #if is_bottom_in_zone(anchor, zone_polygon):
+                    # Use pre-evaluated zone check setting (evaluated once at startup)
+                    zone_check_passed = (
+                        not self.zone_check_enabled or  # If zones disabled, always pass
+                        is_bottom_in_zone(anchor, zone_polygon)   # Otherwise, check zone
+                    )
+
+                    if zone_check_passed:
                         person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
                         for ppe_idx in ppe_indices:
                             ppe_box=self.parent.detection_boxes[ppe_idx]
@@ -79,15 +88,18 @@ class PPE:
                             ppe_confidence=self.parent.detection_score[ppe_idx]
                             if ppe_confidence < 0.7:
                                 continue
-                            if is_object_in_zone(ppe_box, person_poly) and (tracker_id not in self.violation_id_data[ppe_obj_class] or self.parameters["relay"]==1):
+                            # Check if violation PPE (like "no helmet") is detected near person
+                            if is_object_in_zone(ppe_box, person_poly):
                                 if tracker_id not in self.running_data[zone_name]:
                                     self.running_data[zone_name][tracker_id] = {}
-                                # Now, check if the ppe_obj_class key exists for this tracker_id
+
+                                # Track violation frames for this PPE type
                                 if ppe_obj_class not in self.running_data[zone_name][tracker_id]:
                                     self.running_data[zone_name][tracker_id][ppe_obj_class] = 1
                                 else:
                                     self.running_data[zone_name][tracker_id][ppe_obj_class] += 1
 
+                                # Check if violation threshold exceeded
                                 if self.running_data[zone_name][tracker_id][ppe_obj_class] > self.parameters["frame_accuracy"]:
                                     if self.relay!=None and self.parameters["relay"]==1:
                                         try:
@@ -100,31 +112,32 @@ class PPE:
                                                 print("Changed the Index")
                                         except Exception as e:
                                             print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
+                                    # Only log violation once per tracker_id per PPE type
+                                    if ppe_obj_class not in self.violation_id_data:
+                                        self.violation_id_data[ppe_obj_class] = []
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
-                                        xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
-                                        ############################################################
-                                        now_ist = datetime.now(self.timezone)  # current IST time, tz-aware
-                                        # IST offset is +5:30
-                                        offset = now_ist.utcoffset()  # should be timedelta(hours=5, minutes=30)
 
-                                        # Subtract the offset to get a "fake UTC" datetime whose wall time matches IST
-                                        fake_utc = now_ist
+                                        xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
 
-                                        # Make it timezone aware UTC
-                                        fake_utc = fake_utc.replace(tzinfo=pytz.utc)
-                                        date = fake_utc.isoformat()
-                                        datetimestamp=f"{date}"
-                                        # datetimestamp_trackerid=f"{datetime.now(self.ist_timezone).isoformat()}_{tracker_id}"
                                         ############################################################
-                                        #datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
-                                        subcategory=ppe_objects[ppe_obj_class]
-                                        # Use parent's event creator
+                                        now_local = datetime.now(self.timezone)
+                                        fake_utc = now_local.replace(tzinfo=pytz.utc)
+                                        datetimestamp = f"{fake_utc.isoformat()}"
+                                        ############################################################
+
+                                        subcategory = ppe_objects[ppe_obj_class]  # Maps "head" -> "No Helmet"
+
+                                        # Include zone info only if zones are being enforced
+                                        event_metadata = {}
+                                        if self.zone_check_enabled:
+                                            event_metadata["zone_name"] = zone_name
+
                                         self.parent.create_result_events(
                                             xywh,
                                             obj_class,
                                             f"PPE-{subcategory}",
-                                            {"zone_name": zone_name},
+                                            event_metadata,
                                             datetimestamp,
                                             ppe_confidence,
                                             self.parent.image,

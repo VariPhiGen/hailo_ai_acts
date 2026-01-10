@@ -95,6 +95,7 @@
   },
   "parameters":{
       "subcategory_mapping":{"head":"No Helmet"},
+      "no_zone":1,
       "switch_relay":[1,2],
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
