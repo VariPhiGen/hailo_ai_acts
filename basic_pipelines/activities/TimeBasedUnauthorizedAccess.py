@@ -66,7 +66,6 @@ class TimeBasedUnauthorizedAccess:
                     
                     # Check if the current time is within the specified time range
                     if start_time <= current_time <= end_time:
-
                         offender_indices = [i for i, cls in enumerate(self.parent.classes) if cls in self.parameters["subcategory_mapping"]]
 
                         for idx in offender_indices:

@@ -48,12 +48,74 @@ def get_device_info() -> Dict:
         "device_name": cfg.get("device_name", "UNKNOWN")
     }
 
-def download_file(url: str, dst: str):
-    r = requests.get(url, stream=True)
-    r.raise_for_status()
-    with open(dst, "wb") as f:
-        for chunk in r.iter_content(8192):
-            f.write(chunk)
+def download_file(url: str, dst: str, max_retries=3, unstable_network=False, overall_timeout_hours=2):
+    """Download file with network fluctuation resilience
+
+    Args:
+        url: Download URL
+        dst: Destination file path
+        max_retries: Maximum retry attempts
+        unstable_network: If True, uses very generous timeouts for unreliable connections
+        overall_timeout_hours: Maximum total time to spend on download (default: 2 hours)
+    """
+    import time
+    from urllib3.exceptions import IncompleteRead
+
+    overall_timeout_seconds = overall_timeout_hours * 3600
+    start_time = time.time()
+
+    for attempt in range(max_retries):
+        # Check if we've exceeded overall timeout
+        elapsed_time = time.time() - start_time
+        if elapsed_time > overall_timeout_seconds:
+            raise TimeoutError(f"Download exceeded overall timeout of {overall_timeout_hours} hours ({elapsed_time:.1f}s elapsed)")
+
+        try:
+            # First, get file size to calculate adaptive timeouts
+            with requests.head(url, timeout=60 if unstable_network else 30) as head_resp:
+                head_resp.raise_for_status()
+                total_size = int(head_resp.headers.get('content-length', 0))
+
+            # For unstable networks, be very patient - allow up to 1 hour per chunk for massive files
+            if unstable_network:
+                # Very generous timeouts for unreliable networks
+                connection_timeout = 120  # 2 minutes to connect
+                read_timeout = None  # No read timeout - wait as long as needed
+            else:
+                # Calculate adaptive timeouts based on file size for stable networks
+                base_read_timeout = 120  # 2 minutes base
+                if total_size > 100 * 1024 * 1024:  # > 100MB
+                    # Scale timeout: allow up to 5 minutes for very large files
+                    read_timeout = min(300, base_read_timeout + (total_size // (100 * 1024 * 1024)) * 30)
+                else:
+                    read_timeout = base_read_timeout
+                connection_timeout = 30
+
+            with requests.get(url, stream=True, timeout=(connection_timeout, read_timeout)) as r:
+                r.raise_for_status()
+                downloaded = 0
+
+                with open(dst, "wb") as f:
+                    for chunk in r.iter_content(16384):  # Larger chunks for better performance
+                        if chunk:  # filter out keep-alive chunks
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            # Log progress for large files every 10MB
+                            if total_size > 10*1024*1024 and downloaded % (10*1024*1024) < 16384:
+                                print(".1f")
+
+            print(f"Download completed: {dst}")
+            return  # Success, exit function
+
+        except (requests.exceptions.RequestException, OSError, IncompleteRead) as e:
+            if attempt == max_retries - 1:  # Last attempt
+                print(f"Download failed after {max_retries} attempts: {e}")
+                raise e
+            # Exponential backoff: wait 2^attempt seconds
+            wait_time = 2 ** attempt
+            print(f"Download attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
 
 def set_nested_key(cfg: Dict, dotted_key: str, value):
     keys = dotted_key.split(".")
