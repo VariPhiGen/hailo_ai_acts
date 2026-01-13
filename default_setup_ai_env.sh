@@ -4,7 +4,7 @@ set -euo pipefail
 # Path to target .env (default: project root .env)
 ENV_FILE="${1:-./.env}"
 
-# Key/values to enforce (from env_file_template.txt lines 3-34)
+# Key/values to enforce (from env_file_template.txt lines 3-38)
 declare -A KV=(
   [BROKER_PRIMARY]="43.205.29.76:9092"
   [BROKER_FAILOVER_TIMEOUT]="30"
@@ -29,6 +29,8 @@ declare -A KV=(
   [API_AWS_PRIMARY_CGI_FN]="cgisnapshots/"
   [API_AWS_PRIMARY_ENDPOINT]="http://5200001-minio.arresto.io"
   [API_POST_URL]="https://5200001-api.arresto.io/api/client/1825/mfb/forms_data"
+  [API_REQUEST_TIMEOUT]="30"
+  [API_MAX_RETRIES]="3"
   [S3_FAILOVER_TIMEOUT]="30"
   [S3_UPLOAD_RETRIES]="3"
   [WS_SERVER_URL]="ws://54.210.59.224:8000/ws"
