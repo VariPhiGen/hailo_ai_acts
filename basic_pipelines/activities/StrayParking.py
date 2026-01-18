@@ -2,8 +2,10 @@ import time
 from datetime import datetime
 from activities.activity_helper_utils import (
     is_bottom_in_zone,
-    is_activity_active,
-    xywh_original_percentage
+    xywh_original_percentage,
+    init_relay,
+    trigger_relay,
+    activity_active_time
 )
 
 class StrayParking:
@@ -12,81 +14,73 @@ class StrayParking:
         self.zone_data = zone_data
         self.parameters = parameters
         self.running_data = {}
+        for zone_name in zone_data.keys():
+            self.running_data[zone_name] = {}
+
         self.violation_id_data = []
 
-        self.last_check_time = parameters.get("last_check_time", 0)
-
-        self.relay = None
-        if parameters.get("relay", 0) == 1:
-            try:
-                self.relay = self.parent.relay_handler
-                self.switch_relay = parameters["switch_relay"]
-            except Exception:
-                self.relay = None
-
-        for zone in zone_data:
-            self.running_data[zone] = {}
+        self.relay, self.switch_relay = init_relay(self.parent, self.parameters)
 
     def run(self):
-        if not is_activity_active(self.parameters, self.parent.timezone):
+        if not activity_active_time(self.parameters, self.parent.timezone):
             return
 
         if time.time() - self.parameters["last_check_time"] > 1:
             self.parameters["last_check_time"] = time.time()
 
-            for i, cls in enumerate(self.parent.classes):
-                if cls not in self.parameters["subcategory_mapping"]:
-                    continue
+            vehicle_indices = [
+                i for i, cls in enumerate(self.parent.classes)
+                if cls in self.parameters["subcategory_mapping"]
+            ]
 
-                tracker_id = self.parent.tracker_ids[i]
-                anchor = self.parent.anchor_points_original[i]
-                box = self.parent.detection_boxes[i]
+            for idx in vehicle_indices:
+                tracker_id = self.parent.tracker_ids[idx]
+                anchor = self.parent.anchor_points_original[idx]
 
-                for zone_name, polygon in self.zone_data.items():
-                    if is_bottom_in_zone(anchor, polygon):
+                for zone_name, zone_polygon in self.zone_data.items():
+                    if is_bottom_in_zone(anchor, zone_polygon):
                         if tracker_id not in self.running_data[zone_name]:
-                            self.running_data[zone_name][tracker_id] = time.time()
-
-                        elapsed = time.time() - self.running_data[zone_name][tracker_id]
+                            self.running_data[zone_name][tracker_id] = 1
+                        else:
+                            self.running_data[zone_name][tracker_id] += 1
 
                         if (
-                            elapsed >= self.parameters["time_limit"]
+                            self.running_data[zone_name][tracker_id]
+                            > self.parameters["frame_accuracy"]
                             and tracker_id not in self.violation_id_data
                         ):
                             self.violation_id_data.append(tracker_id)
 
-                            if self.relay:
-                                try:
-                                    for r in self.switch_relay:
-                                        self.relay.state(r, on=True)
-                                        self.relay.start_time[r] = time.time()
-                                except Exception:
-                                    pass
+                            if self.parameters["relay"] == 1:
+                                trigger_relay(self.relay, self.switch_relay)
 
-                            xywh = xywh_original_percentage(
-                                box,
-                                self.parent.original_width,
-                                self.parent.original_height
-                            )
-                            datetimestamp = datetime.now(self.parent.timezone).isoformat()
+                            box = self.parent.detection_boxes[idx]
+                            xywh = xywh_original_percentage(box)
+                            datetimestamp = datetime.now(
+                                self.parent.timezone
+                            ).isoformat()
 
                             self.parent.create_result_events(
                                 xywh,
-                                cls,
-                                "Stray Parking",
+                                self.parent.classes[idx],
+                                "Stray_Parking",
                                 {"zone_name": zone_name},
                                 datetimestamp,
                                 1,
                                 self.parent.image
                             )
+                    else:
+                        if tracker_id in self.running_data[zone_name]:
+                            del self.running_data[zone_name][tracker_id]
 
     def cleaning(self):
-        active = self.parent.last_n_frame_tracker_ids
-        for zone in self.running_data:
-            self.running_data[zone] = {
-                k: v for k, v in self.running_data[zone].items()
-                if k in active
-            }
         self.violation_id_data = [
-            v for v in self.violation_id_data if v in active
+            tid for tid in self.violation_id_data
+            if tid in self.parent.last_n_frame_tracker_ids
         ]
+
+        for zone_name in self.zone_data.keys():
+            self.running_data[zone_name] = {
+                k: v for k, v in self.running_data[zone_name].items()
+                if k in self.parent.last_n_frame_tracker_ids
+            }

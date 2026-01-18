@@ -5,7 +5,8 @@ from activities.activity_helper_utils import (
     is_bottom_in_zone, xywh_original_percentage,
     init_relay,
     trigger_relay,
-    relay_auto_off
+    relay_auto_off,
+    activity_active_time
 )
 
 class UnauthorisedArea:
@@ -26,86 +27,67 @@ class UnauthorisedArea:
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
+        if not activity_active_time(self.parameters, self.timezone):
+            return
+
         """Main entry point for this activity"""
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
+            
             current_time = time.time()
 
-            # Loop through the scheduled times (you may have multiple schedules)
-            for schedule in self.parameters["scheduled_time"]:
-                # Get the time intervals (start_time, end_time) and days from the current schedule
-                time_start_end = schedule["time_start_end"]
-                days_of_week = schedule["days"]
+            # Get indices of people/objects we want to track
+            offender_indices = [
+                i for i, cls in enumerate(self.parent.classes)
+                if cls in self.parameters["subcategory_mapping"]
+            ]
 
-                # Get current time in the specified timezone
-                current_time_obj = datetime.now(self.timezone).time()
-                current_day_name = datetime.now(self.timezone).strftime('%A')
+            for idx in offender_indices:
+                obj_class = self.parent.classes[idx]
+                tracker_id = self.parent.tracker_ids[idx]
+                anchor = self.parent.anchor_points_original[idx]
 
-                # Check if today is one of the specified days
-                if current_day_name not in days_of_week:
-                    continue
+                for zone_name, zone_polygon in self.zone_data.items():
+                    zone_tracker_key = f"{zone_name}_{tracker_id}"
 
-                # Loop through all time intervals and check if current time is within any of them
-                time_in_range = False
-                for time_range in time_start_end:
-                    start_time_str, end_time_str = time_range
+                    if is_bottom_in_zone(anchor, zone_polygon):
+                        # Person inside unauthorized zone
 
-                    # Convert start and end time strings to time objects
-                    start_time = datetime.strptime(start_time_str, "%H:%M").time()
-                    end_time = datetime.strptime(end_time_str, "%H:%M").time()
+                        if zone_tracker_key not in self.person_entry_times:
+                            # Entry time
+                            self.person_entry_times[zone_tracker_key] = current_time
+                            continue
 
-                    # Check if the current time is within the specified time range
-                    if start_time <= current_time_obj <= end_time:
-                        time_in_range = True
-                        break
+                        time_in_zone = current_time - self.person_entry_times[zone_tracker_key]
 
-                if not time_in_range:
-                    continue
+                        if (
+                            time_in_zone > self.parameters["time_limit"]
+                            and tracker_id not in self.violation_id_data
+                        ):
+                            self.violation_id_data.append(tracker_id)
 
-                # Get indices of people/objects we want to track
-                offender_indices = [i for i, cls in enumerate(self.parent.classes)
-                                  if cls in self.parameters["subcategory_mapping"]]
+                            # Trigger relay if configured
+                            if self.parameters["relay"] == 1:
+                                trigger_relay(self.relay, self.switch_relay)
 
-                for idx in offender_indices:
-                    obj_class = self.parent.classes[idx]
-                    tracker_id = self.parent.tracker_ids[idx]
-                    anchor = self.parent.anchor_points_original[idx]
+                            # Create violation event
+                            box = self.parent.detection_boxes[idx]
+                            xywh = xywh_original_percentage(box)
+                            datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
 
-                    for zone_name, zone_polygon in self.zone_data.items():
-                        if is_bottom_in_zone(anchor, zone_polygon):
-                            # Person is in the unauthorized zone
-                            zone_tracker_key = f"{zone_name}_{tracker_id}"
-
-                            if zone_tracker_key not in self.person_entry_times:
-                                # Person just entered the zone
-                                self.person_entry_times[zone_tracker_key] = current_time
-                            else:
-                                # Person has been in zone, check if exceeded time limit
-                                time_in_zone = current_time - self.person_entry_times[zone_tracker_key]
-
-                                if time_in_zone > self.parameters["time_limit"]:
-                                    # Time limit exceeded - trigger violation
-                                    if tracker_id not in self.violation_id_data:
-                                        self.violation_id_data.append(tracker_id)
-
-                                        # Trigger relay if configured
-                                        if self.parameters["relay"] == 1:
-                                            trigger_relay(self.relay, self.switch_relay)
-
-
-                                        # Create violation event
-                                        box = self.parent.detection_boxes[idx]
-                                        xywh = xywh_original_percentage(box)
-                                        datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
-                                        self.parent.create_result_events(
-                                            xywh, obj_class, f"Security-Unauthorized Area",
-                                            {"zone_name": zone_name}, datetimestamp, 1, self.parent.image
-                                        )
-                        else:
-                            # Person is not in zone anymore, remove from tracking
-                            zone_tracker_key = f"{zone_name}_{tracker_id}"
-                            if zone_tracker_key in self.person_entry_times:
-                                del self.person_entry_times[zone_tracker_key]
+                            self.parent.create_result_events(
+                                xywh,
+                                obj_class,
+                                "Security-Unauthorized Area",
+                                {"zone_name": zone_name},
+                                datetimestamp,
+                                1,
+                                self.parent.image
+                            )
+                    else:
+                        # Person left the zone → reset dwell timer
+                        if zone_tracker_key in self.person_entry_times:
+                            del self.person_entry_times[zone_tracker_key]
 
     def cleaning(self):
         """Clean up tracking data for persons that are no longer detected"""

@@ -116,7 +116,7 @@ def relay_auto_off(relay, switch_relay):
 
 # activity active time
 
-def is_activity_active(parameters, timezone):
+def activity_active_time(parameters, timezone):
     """
     Determines whether an activity should run based on scheduled_time config.
 
