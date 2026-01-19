@@ -751,65 +751,18 @@ if __name__ == "__main__":
     active_instances=[]
     active_methods=[]
     for activity, details in config["activities_data"].items():
-        if activity in available_activities and activity in active_activities:
-            if activity=="traffic_overspeeding_distancewise":
-                # Initialize radar if configured
-                if "radar_config" in config:
-                    try:
-                        radar_config = config["radar_config"]
-                        user_data.radar_maxdiff=radar_config.get("max_diff_rais", 15)
-                        user_data.radar_handler.init_radar(
-                            port=radar_config.get("port", "/dev/ttyACM0"),
-                            baudrate=radar_config.get("baudrate", 9600),
-                            max_age=radar_config.get("max_age", 10),
-                            max_diff_rais=radar_config.get("max_diff_rais", 15),
-                            calibration_required=config.get("calibration_required", 2)
-                        )
-                        user_data.radar_handler.start_radar()
-                    except Exception as e:
-                        print(f"CRITICAL: Failed to initialize radar: {e}")
-                        continue
-                zones_data[activity] = {zone: Polygon(coords) for zone, coords in details["zones"].items()}
-                parameters_data[activity]=details["parameters"]
-                violation_id_data[activity]=[]
-                user_data.traffic_overspeeding_distancewise_data=defaultdict(lambda: defaultdict(dict))
-                user_data.distancewise_tracking=[]
-                parameters_data["traffic_overspeeding_distancewise"]["lines_length"]={}
-                user_data.time_stamp=deque(maxlen=20)
-                # Initialize calibration count to 0 for each class
-                for class_name in details["parameters"]["speed_limit"].keys():
-                    user_data.radar_handler.class_calibration_count[class_name] = 0
-                    user_data.radar_handler.is_calibrating[class_name]=True
-                
-                for class_name, limit in details["parameters"]["speed_limit"].items():
-                    # Calibrate using your logic; here's an example:
-                    user_data.calibrate_class_wise[class_name] = details["parameters"]["calibration"]
-                user_data.calibrate_speed["speed"] = None
-                user_data.calibrate_speed["class_name"] = None
-                user_data.calibrate_speed["radar"] = None
-                user_data.calibrate_speed["last_seen"] = time.time() 
-                    
-                for lane_name,coordinates in parameters_data[activity]["lines"].items():
-                    total_distance = 0
-                    # Iterate over the pairs of coordinates in the line
-                    for i in range(len(coordinates) - 1):
-                        x1, y1 = coordinates[i]
-                        x2, y2 = coordinates[i + 1]
-                        total_distance += calculate_distance(x1, y1, x2, y2)  # Calculate distance for each segment
-                    
-                    parameters_data[activity]["lines_length"][lane_name] = total_distance
-
-                user_data.active_activities_for_cleaning[activity]=None
-            
-            else:
+        if activity in available_activities:
+            if activity in active_activities:
                 zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
-                parameters_data=details["parameters"]
+                parameters_data[activity] =details["parameters"]
+                
                 ActivityClass = load_activity_class(activity)
                 if not ActivityClass:
+                    print(f"Failed to load activity class: {activity}")
                     continue
 
                 # Pass user_data as parent
-                activity_instance = ActivityClass(user_data,zone_data,parameters_data)
+                activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
                 active_instances.append(activity_instance)
 
                 # Register available methods from the activity instance
@@ -823,8 +776,10 @@ if __name__ == "__main__":
                     cleaning_method = getattr(activity_instance, "cleaning", None)
                     if callable(cleaning_method):
                         user_data.active_activities_for_cleaning[activity] = cleaning_method
+            else:
+                print("This Activity is not active right now")
         else:
-            print("This Activity is not Active Right Now")
+            print("This Activity is not available right now.")
 
     #Assigning Zones Data to Activity Instance
     user_data.zone_data=zones_data

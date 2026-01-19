@@ -111,4 +111,5 @@ tmp/
 *.gif
 videos/
 photos/
-gifs/ 
+gifs/ hailort-drivers/
+gstshark_*/

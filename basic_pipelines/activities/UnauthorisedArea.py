@@ -52,6 +52,7 @@ class UnauthorisedArea:
 
                     if is_bottom_in_zone(anchor, zone_polygon):
                         # Person inside unauthorized zone
+                        print("person found in zone")
 
                         if zone_tracker_key not in self.person_entry_times:
                             # Entry time
@@ -65,6 +66,7 @@ class UnauthorisedArea:
                             and tracker_id not in self.violation_id_data
                         ):
                             self.violation_id_data.append(tracker_id)
+                            print("Violation found: ", tracker_id)
 
                             # Trigger relay if configured
                             if self.parameters["relay"] == 1:
