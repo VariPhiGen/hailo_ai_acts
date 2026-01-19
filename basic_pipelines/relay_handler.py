@@ -15,9 +15,9 @@ class Relay(object):
         self.auto_off_sec = 3
         self.state_cache = {i: False for i in range(1, 9)}
 
-    # -----------------------------
+# -----------------------------
     # INIT (FIXED)
-    # -----------------------------
+# -----------------------------
     def initiate_relay(self):
         try:
             for d in hid.enumerate():
@@ -43,9 +43,9 @@ class Relay(object):
             self.device.close()
             print("🧹 Relay connection closed")
 
-    # -----------------------------
-    # RELAY CONTROL (FIXED)
-    # -----------------------------
+# -----------------------------
+# RELAY CONTROL (FIXED)
+# -----------------------------
     def state(self, relay, on=None):
         """
         Setter-only (reliable on Linux)
@@ -74,9 +74,9 @@ class Relay(object):
             print(f"⚠️ Relay write failed: {e}")
             raise
 
-    # -----------------------------
-    # AUTO-OFF (UNCHANGED)
-    # -----------------------------
+# -----------------------------
+# AUTO-OFF (UNCHANGED)
+# -----------------------------
     def check_auto_off(self, relays_to_check):
         for relay in relays_to_check:
             start = self.start_time.get(relay, 0)

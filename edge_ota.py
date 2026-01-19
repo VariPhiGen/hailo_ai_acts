@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import asyncio
 import subprocess
@@ -72,9 +73,8 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
 
         try:
             # First, get file size to calculate adaptive timeouts
-            with requests.head(url, timeout=60 if unstable_network else 30) as head_resp:
-                head_resp.raise_for_status()
-                total_size = int(head_resp.headers.get('content-length', 0))
+            # Note: Some S3 presigned URLs may not support HEAD requests
+            total_size = 0 
 
             # For unstable networks, be very patient - allow up to 1 hour per chunk for massive files
             if unstable_network:
@@ -91,15 +91,21 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
                     read_timeout = base_read_timeout
                 connection_timeout = 30
 
-            with requests.get(url, stream=True, timeout=(connection_timeout, read_timeout)) as r:
-                r.raise_for_status()
-                downloaded = 0
+            with requests.get(
+                    url,
+                    stream=True,
+                    timeout=(connection_timeout, read_timeout),
+                    headers={"Accept-Encoding": "identity"}  # important for MinIO
+                ) as r:
+                    r.raise_for_status()
+                    downloaded = 0
 
-                with open(dst, "wb") as f:
-                    for chunk in r.iter_content(16384):  # Larger chunks for better performance
-                        if chunk:  # filter out keep-alive chunks
-                            f.write(chunk)
-                            downloaded += len(chunk)
+                    with open(dst, "wb") as f:
+                        for chunk in r.iter_content(16384):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+
 
                             # Log progress for large files every 10MB
                             if total_size > 10*1024*1024 and downloaded % (10*1024*1024) < 16384:
@@ -108,6 +114,22 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
             print(f"Download completed: {dst}")
             return  # Success, exit function
 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                print(f"❌ Access forbidden (403) for URL: {url}")
+                print("   This could be due to:")
+                print("   - Expired S3 presigned URL (URLs expire after 1 hour)")
+                print("   - Incorrect AWS credentials in server")
+                print("   - Bucket permissions issue on S3 server")
+                print("   - Wrong S3 endpoint URL configuration")
+                print("   - Clock skew between server and S3")
+                print("   - HEAD request not supported (trying GET instead)")
+                print(f"   URL endpoint: {url.split('://')[1].split('/')[0] if '://' in url else 'unknown'}")
+                if attempt == max_retries - 1:
+                    raise Exception(f"S3 access forbidden (403): URL may be expired or HEAD requests not supported. Try downloading manually first.")
+            else:
+                if attempt == max_retries - 1:
+                    raise e
         except (requests.exceptions.RequestException, OSError, IncompleteRead) as e:
             if attempt == max_retries - 1:  # Last attempt
                 print(f"Download failed after {max_retries} attempts: {e}")
@@ -442,8 +464,16 @@ async def ws_client():
                 except Exception:
                     pass
 
+
 # -------------------------------------------------
 # Entry
 # -------------------------------------------------
 if __name__ == "__main__":
-    asyncio.run(ws_client())
+    # Check for test URL argument
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        if len(sys.argv) > 2:
+            test_download_url(sys.argv[2])
+        else:
+            print("Usage: python edge_ota.py test <url>")
+    else:
+        asyncio.run(ws_client())
