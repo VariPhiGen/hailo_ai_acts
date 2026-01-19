@@ -56,6 +56,38 @@ def xywh_original_percentage(box: List[float], original_width: int, original_hei
         float((max_y - min_y) * 100 / original_height)
     ]
     return xywh
+    
+# calculate iou
+def calculate_iou(self, boxA, boxB):
+    """
+    Calculate the Intersection over Union (IoU) of two bounding boxes.
+    
+    Args:
+        boxA: First bounding box in format [x_min, y_min, x_max, y_max]
+        boxB: Second bounding box in format [x_min, y_min, x_max, y_max]
+        
+    Returns:
+        IoU value between 0 and 1
+    """
+    # Determine the (x, y)-coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    
+    # Compute the area of the intersection rectangle
+    interWidth = max(0, xB - xA)
+    interHeight = max(0, yB - yA)
+    interArea = interWidth * interHeight
+    
+    # Compute the area of both bounding boxes
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    
+    # Compute the Intersection over Union
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+    
+    return iou
 
 # relay
 def init_relay(parent, parameters):
