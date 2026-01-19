@@ -274,11 +274,68 @@ def rollback_configuration():
     if os.path.exists(CONFIG_PATH + ".backup"):
         shutil.copy2(CONFIG_PATH + ".backup", CONFIG_PATH)
 
+def make_scripts_executable():
+    """Make essential shell scripts executable"""
+    scripts_to_make_executable = [
+        "run_detection.sh",
+        "run_ota.sh",
+        "setup_ota_env.sh",
+        "setup_system.sh",
+        "fix_usb_permissions.sh",
+        "rpi_relay_fix.sh"
+    ]
+
+    print("🔧 Making essential scripts executable...")
+    for script in scripts_to_make_executable:
+        script_path = os.path.join(BASE_DIR, script)
+        if os.path.exists(script_path):
+            subprocess.run(["chmod", "+x", script_path], check=False)
+            print(f"   ✅ {script}")
+        else:
+            print(f"   ⚠️ {script} not found")
+
+def restart_services():
+    """Restart detection and OTA services after updates"""
+    print("🔄 Restarting services after update...")
+
+    # Stop any running processes
+    print("🛑 Stopping existing processes...")
+    subprocess.run(["pkill", "-f", "detection.py"], check=False)
+    subprocess.run(["pkill", "-f", "edge_ota.py"], check=False)
+    subprocess.run(["pkill", "-f", "python.*detection"], check=False)  # More specific pattern
+
+    # Give processes time to stop
+    import time
+    time.sleep(30)
+
+    # Make scripts executable before restarting
+    make_scripts_executable()
+
+    # Restart detection service
+    detection_script = os.path.join(BASE_DIR, "run_detection.sh")
+    if os.path.exists(detection_script):
+        print("🚀 Restarting detection service...")
+        try:
+            # Start in background
+            process = subprocess.Popen(
+                [detection_script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=BASE_DIR
+            )
+            print(f"✅ Detection service restarted (PID: {process.pid})")
+        except Exception as e:
+            print(f"⚠️ Failed to restart detection service: {e}")
+
+    print("✅ Service restart completed")
+
 def git_update(step: Dict):
     branch = step.get("branch", "main")
     tag = step.get("tag")
     do_pull = step.get("pull", True)
+    restart_after_update = step.get("restart_services", True)  # Default to True
 
+    print("📥 Starting git update...")
     subprocess.run(["git", "fetch", "--all"], cwd=BASE_DIR, check=True)
 
     if branch:
@@ -290,20 +347,81 @@ def git_update(step: Dict):
     if tag:
         subprocess.run(["git", "fetch", "--tags"], cwd=BASE_DIR, check=True)
         subprocess.run(["git", "checkout", tag], cwd=BASE_DIR, check=True)
+        print("✅ Git tag checkout completed")
+
+    # Always restart services after git operations (regardless of changes)
+    if restart_after_update:
+        print("🔄 Performing post-git service restart...")
+        restart_services()
+    else:
+        print("ℹ️ Service restart disabled in configuration")
 
 def run_shell(step: Dict):
     script = step.get("script_name")
     if not script:
         return
+
     path = os.path.join(BASE_DIR, script)
+
+    # Ensure the script exists
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Script not found: {path}")
+
+    # Make executable
+    print(f"🔧 Making script executable: {script}")
     subprocess.run(["chmod", "+x", path], check=False)
-    subprocess.run([path], check=True)
+
+    # Run the script
+    print(f"🚀 Executing script: {script}")
+    result = subprocess.run([path], check=True, cwd=BASE_DIR, capture_output=True, text=True)
+
+    if result.stdout:
+        print(f"📝 Script output: {result.stdout.strip()}")
+
+    # Check if we should restart services after script execution
+    if step.get("restart_services_after", False):
+        print("🔄 Restarting services after script execution...")
+        restart_services()
+
+    print(f"✅ Script {script} completed successfully")
 
 def post_actions(step: Dict):
+    """Execute post-update actions like service restarts and reboots"""
+
+    # Restart specific system service
     if step.get("restart_service"):
-        subprocess.run(["sudo", "systemctl", "restart", step["service_name"]], check=False)
+        service_name = step["service_name"]
+        print(f"🔄 Restarting system service: {service_name}")
+        result = subprocess.run(["sudo", "systemctl", "restart", service_name], check=False)
+        if result.returncode == 0:
+            print(f"✅ System service {service_name} restarted")
+        else:
+            print(f"⚠️ Failed to restart system service {service_name}")
+
+    # Restart application services
+    if step.get("restart_app_services", False):
+        restart_services()
+
+    # Reboot system
     if step.get("reboot"):
+        print("🔄 System reboot requested...")
+        print("⚠️ System will reboot in 10 seconds")
+        import time
+        time.sleep(10)
         subprocess.run(["sudo", "reboot"])
+
+    # Custom post-update commands
+    if step.get("custom_commands"):
+        for cmd in step["custom_commands"]:
+            print(f"🚀 Executing custom command: {cmd}")
+            try:
+                result = subprocess.run(cmd, shell=True, check=True, cwd=BASE_DIR, capture_output=True, text=True)
+                if result.stdout:
+                    print(f"📝 Command output: {result.stdout.strip()}")
+                print("✅ Custom command completed")
+            except Exception as e:
+                print(f"⚠️ Custom command failed: {e}")
+                # Don't fail the entire OTA for custom command errors
 
 def handle_ota(payload: Dict):
     device_info = get_device_info()

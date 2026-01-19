@@ -33,6 +33,11 @@ pip install websockets requests python-dotenv
 
 deactivate
 
+echo "👉 Making run_ota.sh executable..."
+chmod +x "$SCRIPT_DIR/run_ota.sh"
+
 echo "✅ OTA environment ready at $VENV_PATH"
 echo "   Activate with: source \"$VENV_PATH/bin/activate\""
+echo "   Run OTA with: ./run_ota.sh"
+echo "   Note: Scripts will be made executable automatically during OTA operations"
 
