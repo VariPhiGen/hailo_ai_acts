@@ -154,9 +154,9 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
 
             # For unstable networks, be very patient - allow up to 1 hour per chunk for massive files
             if unstable_network:
-                # Very generous timeouts for unreliable networks
+                # Very generous timeouts for unreliable networks, but avoid indefinite hangs
                 connection_timeout = 120  # 2 minutes to connect
-                read_timeout = None  # No read timeout - wait as long as needed
+                read_timeout = 300  # 5 minutes per read to prevent permanent stalls
             else:
                 # Calculate adaptive timeouts based on file size for stable networks
                 base_read_timeout = 120  # 2 minutes base
