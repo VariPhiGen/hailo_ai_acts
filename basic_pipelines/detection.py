@@ -40,6 +40,7 @@ from helper_utils import (
 from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
+from pose_estimation import PoseEstimator, run_pose_async, POSE_SKELETON
 
 
 
@@ -133,6 +134,13 @@ class user_app_callback_class(app_callback_class):
         self.main_loop = asyncio.new_event_loop()
         self.asyncio_thread = Thread(target=self.start_asyncio_loop, daemon=True)
         self.asyncio_thread.start()
+
+        # pose estimator
+        self.pose_estimator = PoseEstimator(self.pose_hef_path)
+        self.latest_pose = {}
+        self.last_pose_frame = {}
+        self.pose_frame_gap = 10
+
         
     def calibration_check(self,flag=False):
         """
@@ -475,6 +483,8 @@ def app_callback(pad, info, user_data,frame_type):
         confidences=[]
         tracker_ids=[]
         anchor_points_original=[]
+        pose_crops = []
+        pose_meta = []
         
         if user_data.ratio is None and user_data.original_width is not None:
             user_data.ratio=min(width/user_data.original_width,height/user_data.original_height)
@@ -495,6 +505,23 @@ def app_callback(pad, info, user_data,frame_type):
                     y_min=max(int((bbox.ymin()*height-user_data.pady)/user_data.ratio),0)
                     x_max=max(int((bbox.xmax()*width-user_data.padx)/user_data.ratio),0)
                     y_max=max(int((bbox.ymax()*height-user_data.pady)/user_data.ratio),0)
+
+                    # -------- POSE LOGIC (NON-BLOCKING) --------
+                    if (
+                        label == "person"
+                        and user_data.pose_estimator is not None
+                        and track_id != 0
+                    ):
+                        # Throttle pose per tracker
+                        last_frame = user_data.last_pose_frame.get(track_id, -user_data.pose_frame_gap)
+                        if (user_data.frame_monitor_count - last_frame) >= user_data.pose_frame_gap:
+
+                            crop = user_data.image[y_min:y_max, x_min:x_max]
+                            if crop.size != 0:
+                                pose_crops.append(crop)
+                                pose_meta.append((track_id, x_min, y_min, x_max, y_max))
+                                user_data.last_pose_frame[track_id] = user_data.frame_monitor_count
+
                     #Appending the results from Detections
                     xyxys.append([x_min,y_min,x_max,y_max])
                     class_ids.append(detection.get_class_id())
@@ -522,6 +549,28 @@ def app_callback(pad, info, user_data,frame_type):
 
             for method in user_data.active_methods:
                 method()
+
+            # --- ASYNC POSE INFERENCE ---
+            if pose_crops:
+                user_data.thread_pool.submit(
+                    run_pose_async,
+                    user_data,
+                    pose_crops,
+                    pose_meta
+                )
+
+        # --- DRAW LATEST POSE (LIVE OVERLAY) ---
+        for kp_list in user_data.latest_pose.values():
+            for (a, b) in POSE_SKELETON:
+                if a < len(kp_list) and b < len(kp_list):
+                    p1 = kp_list[a]
+                    p2 = kp_list[b]
+                    cv2.line(
+                        user_data.image,
+                        (p1["x"], p1["y"]),
+                        (p2["x"], p2["y"]),
+                        (0, 255, 0), 2
+                    )
 
     return Gst.PadProbeReturn.OK
 
