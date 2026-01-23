@@ -13,7 +13,10 @@ pyvenv.cfg
 # Hailo Resources and Temp Files
 hailo_temp_resources/
 resources/
+resources
 configuration.json
+aiacts/
+ota/
 
 
 # IMPORTANT: Keep configuration files
