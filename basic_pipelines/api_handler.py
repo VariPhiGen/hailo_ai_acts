@@ -53,7 +53,7 @@ class APIHandler:
             "remarks": "Violation Detected",
             "event_category": event_category,
             "whom_to_notify": "mohammed@arresto.in",
-            "camera_unique_id": "3acbb55c-d6cb-4470-8d9c-5d8de5223bea",
+            "camera_unique_id": message.get("sensor_id", self.config.get("sensor_id", "")),
             "safety_captain_id": "varun@arresto.in",
             "incident_occured_on": message.get("datetimestamp_trackerid", ""),
             "incident_updated_on": message.get("datetimestamp_trackerid", ""),
