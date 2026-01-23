@@ -48,7 +48,7 @@ Sets up additional AI environment pieces.
 
 6) Write the default configuration file  
 ```
-bash write_configuration.sh
+bash default_write_configuration.sh
 ```
 Generates `configuration.json` with default sensor/camera/activity settings.
 
@@ -63,6 +63,12 @@ Make sure the Kafka broker is connected, S3 uploads succeed, and detections look
 bash setup_service.sh
 ```
 Registers the pipeline as a service once confirmed working interactively.
+
+9) Optional: USB relay permissions (Raspberry Pi)  
+```
+bash rpi_relay_fix.sh
+```
+Applies udev/group permissions for USB relays (hidraw/usb).
 
 
 

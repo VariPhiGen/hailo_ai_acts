@@ -438,7 +438,6 @@ def make_scripts_executable():
         "run_ota.sh",
         "setup_ota_env.sh",
         "setup_system.sh",
-        "fix_usb_permissions.sh",
         "rpi_relay_fix.sh"
     ]
 
@@ -454,6 +453,9 @@ def make_scripts_executable():
 def restart_services():
     """Restart detection and OTA services after updates"""
     print("🔄 Restarting services after update...")
+
+    # Ensure scripts are executable before any restart attempt
+    make_scripts_executable()
 
     # Prefer systemd restart if available; avoid killing OTA process directly
     detection_restarted = False
@@ -482,9 +484,6 @@ def restart_services():
     # Give processes time to stop
     import time
     time.sleep(60)
-
-    # Make scripts executable before restarting
-    make_scripts_executable()
 
     # Restart detection service (fallback path)
     if not detection_restarted:
