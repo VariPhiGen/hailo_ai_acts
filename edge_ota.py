@@ -458,13 +458,13 @@ def restart_services():
     # Prefer systemd restart if available; avoid killing OTA process directly
     detection_restarted = False
     if shutil.which("systemctl"):
-        result = subprocess.run(["systemctl", "restart", "acts-detection"], check=False)
+        result = subprocess.run(["sudo", "-n", "systemctl", "restart", "acts-detection"], check=False)
         if result.returncode == 0:
             detection_restarted = True
             print("✅ Restarted acts-detection via systemd")
             # Wait for detection service to become active (Hailo init can take time)
             for _ in range(36):  # up to 3 minutes
-                status = subprocess.run(["systemctl", "is-active", "--quiet", "acts-detection"])
+                status = subprocess.run(["sudo", "-n", "systemctl", "is-active", "--quiet", "acts-detection"])
                 if status.returncode == 0:
                     print("✅ acts-detection is active")
                     break
@@ -701,7 +701,7 @@ async def schedule_ota_restart(delay_seconds: int = 5):
     """Restart OTA service after a short delay to allow ACK to send."""
     await asyncio.sleep(delay_seconds)
     if shutil.which("systemctl"):
-        subprocess.run(["systemctl", "restart", "edge-ota"], check=False)
+        subprocess.run(["sudo", "-n", "systemctl", "restart", "edge-ota"], check=False)
     else:
         print("⚠️ systemctl not available; OTA restart skipped")
 
