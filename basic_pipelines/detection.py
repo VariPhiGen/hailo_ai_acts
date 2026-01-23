@@ -136,7 +136,7 @@ class user_app_callback_class(app_callback_class):
         self.asyncio_thread.start()
 
         # pose estimator
-        self.pose_estimator = PoseEstimator(self.pose_hef_path)
+        self.pose_estimator = None
         self.latest_pose = {}
         self.last_pose_frame = {}
         self.pose_frame_gap = 10
@@ -713,6 +713,7 @@ if __name__ == "__main__":
     try:
         hef_path = config.get("default_arguments", {}).get("hef_path")
         labels_json = config.get("default_arguments", {}).get("labels-json")
+        pose_hef_path = config.get("default_arguments", {}).get("pose_hef_path")
         
         # Check if hef_path exists and is not None/empty
         if hef_path and hef_path != "None" and os.path.exists(hef_path):
@@ -727,11 +728,30 @@ if __name__ == "__main__":
         else:
             user_data.labels_json = None
             print(f"⚠️  Labels file not found or invalid: {labels_json}")
+        
+        # Check if pose_hef path exists and is not None/empty
+        if pose_hef_path and pose_hef_path != "None" and os.path.exists(pose_hef_path):
+            user_data.pose_hef_path = pose_hef_path
+            print(f"✅ Pose HEF configured: {pose_hef_path}")
+        else:
+            user_data.pose_hef_path = None
+            print(f"ℹ️ Pose HEF not configured or missing: {pose_hef_path}")
             
     except Exception as e:
         print(f"❌ Error setting up file paths: {e}")
         user_data.hef_path = None
+        user_data.pose_hef_path = None
         user_data.labels_json = None
+        
+    if user_data.pose_hef_path:
+        try:
+            print("⏳ Initializing pose estimator...")
+            user_data.pose_estimator = PoseEstimator(user_data.pose_hef_path)
+            print("✅ Pose estimator initialized")
+        except Exception as e:
+            print(f"❌ Pose estimator init failed: {e}")
+            user_data.pose_estimator = None
+
     
 
     # Get save settings from config
@@ -800,35 +820,48 @@ if __name__ == "__main__":
     active_instances=[]
     active_methods=[]
     for activity, details in config["activities_data"].items():
-        if activity in available_activities:
-            if activity in active_activities:
-                zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
-                parameters_data[activity] =details["parameters"]
+        if activity not in available_activities:
+            print(f"Activity '{activity}' is not supported.")
+            continue
+
+        if activity not in active_activities:
+            print(f"Activity '{activity}' is disabled in config.")
+            continue
+            
+        zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
+        parameters_data[activity] =details["parameters"]
                 
-                ActivityClass = load_activity_class(activity)
-                if not ActivityClass:
-                    print(f"Failed to load activity class: {activity}")
-                    continue
+        ActivityClass = load_activity_class(activity)
+        if not ActivityClass:
+            print(f"Failed to load activity class: {activity}")
+            continue
 
-                # Pass user_data as parent
-                activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
-                active_instances.append(activity_instance)
+        # Pass user_data as parent
+        # activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
+        try:
+            activity_instance = ActivityClass(
+                user_data,
+                zone_data,
+                parameters_data[activity]
+            )
+        except Exception as e:
+            print(f"Failed to initialize activity '{activity}': {e}")
+            continue
+            
+        active_instances.append(activity_instance)
 
-                # Register available methods from the activity instance
-                if isinstance(activity_instance, object):
-                    # Register run() if available
-                    run_method = getattr(activity_instance, "run", None)
-                    if callable(run_method):
-                        active_methods.append(run_method)
+        # Register available methods from the activity instance
+        # if isinstance(activity_instance, object):
+        # Register run() if available
+        run_method = getattr(activity_instance, "run", None)
+        if callable(run_method):
+            active_methods.append(run_method)
 
-                    # Register cleaning() if available
-                    cleaning_method = getattr(activity_instance, "cleaning", None)
-                    if callable(cleaning_method):
-                        user_data.active_activities_for_cleaning[activity] = cleaning_method
-            else:
-                print("This Activity is not active right now")
-        else:
-            print("This Activity is not available right now.")
+        # Register cleaning() if available
+        cleaning_method = getattr(activity_instance, "cleaning", None)
+        if callable(cleaning_method):
+            user_data.active_activities_for_cleaning[activity] = cleaning_method
+
 
     #Assigning Zones Data to Activity Instance
     user_data.zone_data=zones_data

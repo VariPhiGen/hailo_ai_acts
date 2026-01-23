@@ -28,8 +28,10 @@ class UnauthorisedArea:
 
     def run(self):
         if not activity_active_time(self.parameters, self.timezone):
+            print("[UnauthorisedArea] Out of active time")
             return
-
+        
+        # print("[UnauthorisedArea] called")
         """Main entry point for this activity"""
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
@@ -52,7 +54,7 @@ class UnauthorisedArea:
 
                     if is_bottom_in_zone(anchor, zone_polygon):
                         # Person inside unauthorized zone
-                        print("person found in zone")
+                        print("person found in zone", flush=True)
 
                         if zone_tracker_key not in self.person_entry_times:
                             # Entry time
@@ -66,7 +68,7 @@ class UnauthorisedArea:
                             and tracker_id not in self.violation_id_data
                         ):
                             self.violation_id_data.append(tracker_id)
-                            print("Violation found: ", tracker_id)
+                            print("Violation found: {tracker_id}", flush=True)
 
                             # Trigger relay if configured
                             if self.parameters["relay"] == 1:

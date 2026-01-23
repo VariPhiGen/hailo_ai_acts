@@ -126,7 +126,7 @@ import numpy as np
 from hailo_platform import (
     HEF, VDevice, ConfigureParams,
     InputVStreamParams, OutputVStreamParams,
-    InferVStreams, FormatType
+    InferVStreams, FormatType, HailoStreamInterface
 )
 
 # --- based on coco keypoints ---
@@ -150,10 +150,14 @@ POSE_SKELETON = [
 class PoseEstimator:
     def __init__(self, hef_path):
         self.hef = HEF(hef_path)
-        self.device = VDevice()  # scheduler-managed
+        self.device = VDevice()
+
         self.network_group = self.device.configure(
             self.hef,
-            ConfigureParams.create_from_hef(self.hef)
+            ConfigureParams.create_from_hef(
+                hef=self.hef,
+                interface=HailoStreamInterface.PCIe
+            )
         )[0]
 
         self.input_params = InputVStreamParams.make(
@@ -163,27 +167,21 @@ class PoseEstimator:
             self.network_group, format_type=FormatType.FLOAT32
         )
 
-        self.input_info = self.hef.get_input_vstream_infos()[0]
-        self.in_w = self.input_info.shape[1]
-        self.in_h = self.input_info.shape[0]
+        info = self.hef.get_input_vstream_infos()[0]
+        self.in_w = info.shape[1]
+        self.in_h = info.shape[0]
 
-        self.infer = InferVStreams(
+    def infer_batch(self, crops):
+        resized = [cv2.resize(img, (self.in_w, self.in_h)) for img in crops]
+        batch = np.stack(resized, axis=0)
+
+        # ✅ CORRECT usage for your HailoRT
+        with InferVStreams(
             self.network_group,
             self.input_params,
             self.output_params
-        )
-        self.infer.activate()
-
-    def infer_batch(self, crops):
-        """
-        crops: list of BGR numpy images
-        """
-        resized = [
-            cv2.resize(img, (self.in_w, self.in_h))
-            for img in crops
-        ]
-        batch = np.stack(resized, axis=0)
-        return self.infer.infer(batch)
+        ) as infer:
+            return infer.infer(batch)
 
 
 # --- postprocess ---
