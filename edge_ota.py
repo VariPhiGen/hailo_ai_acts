@@ -3,6 +3,7 @@ import sys
 import json
 import asyncio
 import subprocess
+import hashlib
 from datetime import datetime, timezone, timedelta
 import requests
 import websockets
@@ -10,6 +11,23 @@ import shutil
 from dotenv import load_dotenv
 from typing import Dict, Optional, Tuple
 
+# -------------------------------------------------
+# Continuous Model Download for OTA Updates
+# -------------------------------------------------
+# This module supports continuous/resumable downloads for large AI models during OTA updates.
+# Key features:
+# - Resume capability: Downloads can resume from interruption points
+# - Progress persistence: Download progress is saved to disk and survives restarts
+# - Large file support: Optimized timeouts and chunk sizes for models >100MB
+# - Verification: Optional file size and SHA256 hash verification
+# - Network resilience: Exponential backoff and generous timeouts for unstable networks
+#
+# Usage examples:
+# 1. Basic download: download_file("https://example.com/model.hef", "/path/to/model.hef")
+# 2. With verification: download_file(url, dst, expected_size=104857600, expected_hash="abc123...")
+# 3. Large model download: download_file(url, dst, unstable_network=True, overall_timeout_hours=4)
+# 4. Test resume: python edge_ota.py test <url> interrupt <expected_size>
+#
 # -------------------------------------------------
 # Base paths (device-name agnostic)
 # -------------------------------------------------
@@ -49,8 +67,45 @@ def get_device_info() -> Dict:
         "device_name": cfg.get("device_name", "UNKNOWN")
     }
 
-def download_file(url: str, dst: str, max_retries=3, unstable_network=False, overall_timeout_hours=2):
-    """Download file with network fluctuation resilience
+def verify_download(file_path: str, expected_size: int = None, expected_hash: str = None) -> bool:
+    """Verify downloaded file integrity
+
+    Args:
+        file_path: Path to the downloaded file
+        expected_size: Expected file size in bytes (optional)
+        expected_hash: Expected SHA256 hash (optional)
+
+    Returns:
+        bool: True if verification passes, False otherwise
+    """
+    if not os.path.exists(file_path):
+        print(f"❌ File does not exist: {file_path}")
+        return False
+
+    actual_size = os.path.getsize(file_path)
+
+    # Check size if expected
+    if expected_size and actual_size != expected_size:
+        print(f"❌ Size mismatch: expected {expected_size}, got {actual_size}")
+        return False
+
+    # Check hash if expected
+    if expected_hash:
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                sha256.update(chunk)
+        actual_hash = sha256.hexdigest()
+        if actual_hash != expected_hash:
+            print(f"❌ Hash mismatch: expected {expected_hash}, got {actual_hash}")
+            return False
+
+    print(f"✅ File verification passed: {file_path} ({actual_size} bytes)")
+    return True
+
+
+def download_file(url: str, dst: str, max_retries=3, unstable_network=False, overall_timeout_hours=2, expected_size=None, expected_hash=None):
+    """Download file with network fluctuation resilience and resume capability for large models
 
     Args:
         url: Download URL
@@ -58,12 +113,31 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
         max_retries: Maximum retry attempts
         unstable_network: If True, uses very generous timeouts for unreliable connections
         overall_timeout_hours: Maximum total time to spend on download (default: 2 hours)
+        expected_size: Expected file size for verification (optional)
+        expected_hash: Expected SHA256 hash for verification (optional)
     """
     import time
     from urllib3.exceptions import IncompleteRead
 
     overall_timeout_seconds = overall_timeout_hours * 3600
     start_time = time.time()
+
+    # Progress file to track download state
+    progress_file = dst + ".progress"
+    temp_file = dst + ".tmp"
+
+    # Try to get file size with HEAD request (may not work with all S3 presigned URLs)
+    total_size = 0
+    supports_range = False
+
+    try:
+        head_response = requests.head(url, timeout=30, headers={"Accept-Encoding": "identity"})
+        if head_response.status_code == 200:
+            total_size = int(head_response.headers.get('content-length', 0))
+            supports_range = head_response.headers.get('accept-ranges') == 'bytes'
+            print(f"📊 File size: {total_size / (1024*1024):.1f} MB, Range support: {supports_range}")
+    except Exception as e:
+        print(f"⚠️ Could not get file size via HEAD request: {e}")
 
     for attempt in range(max_retries):
         # Check if we've exceeded overall timeout
@@ -72,9 +146,11 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
             raise TimeoutError(f"Download exceeded overall timeout of {overall_timeout_hours} hours ({elapsed_time:.1f}s elapsed)")
 
         try:
-            # First, get file size to calculate adaptive timeouts
-            # Note: Some S3 presigned URLs may not support HEAD requests
-            total_size = 0 
+            # Check if we have a partial download to resume
+            existing_size = 0
+            if os.path.exists(temp_file):
+                existing_size = os.path.getsize(temp_file)
+                print(f"🔄 Resuming download from byte {existing_size}")
 
             # For unstable networks, be very patient - allow up to 1 hour per chunk for massive files
             if unstable_network:
@@ -85,34 +161,88 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
                 # Calculate adaptive timeouts based on file size for stable networks
                 base_read_timeout = 120  # 2 minutes base
                 if total_size > 100 * 1024 * 1024:  # > 100MB
-                    # Scale timeout: allow up to 5 minutes for very large files
-                    read_timeout = min(300, base_read_timeout + (total_size // (100 * 1024 * 1024)) * 30)
+                    # Scale timeout: allow up to 10 minutes for very large files
+                    read_timeout = min(600, base_read_timeout + (total_size // (100 * 1024 * 1024)) * 60)
                 else:
                     read_timeout = base_read_timeout
                 connection_timeout = 30
+
+            # Prepare headers for resume capability
+            headers = {"Accept-Encoding": "identity"}
+            if existing_size > 0:
+                headers["Range"] = f"bytes={existing_size}-"
 
             with requests.get(
                     url,
                     stream=True,
                     timeout=(connection_timeout, read_timeout),
-                    headers={"Accept-Encoding": "identity"}  # important for MinIO
+                    headers=headers
                 ) as r:
                     r.raise_for_status()
-                    downloaded = 0
 
-                    with open(dst, "wb") as f:
-                        for chunk in r.iter_content(16384):
+                    # Check if server supports range requests
+                    if existing_size > 0 and r.status_code != 206:
+                        print("⚠️ Server doesn't support range requests, restarting download")
+                        existing_size = 0
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+
+                    # Get actual content length for this request
+                    content_length = int(r.headers.get('content-length', 0))
+                    if total_size == 0:
+                        total_size = existing_size + content_length
+
+                    downloaded = existing_size
+                    mode = 'ab' if existing_size > 0 else 'wb'
+
+                    with open(temp_file, mode) as f:
+                        for chunk in r.iter_content(65536):  # Larger chunks for better performance
                             if chunk:
                                 f.write(chunk)
                                 downloaded += len(chunk)
 
+                                # Save progress periodically (every 5MB)
+                                if downloaded % (5 * 1024 * 1024) < 65536:
+                                    with open(progress_file, 'w') as pf:
+                                        pf.write(f"{downloaded}\n{total_size}\n{time.time()}")
+                                    if total_size > 0:
+                                        print(f"📥 Progress: {downloaded / (1024*1024):.1f}/{total_size / (1024*1024):.1f} MB ({downloaded/total_size*100:.1f}%)")
+                                    else:
+                                        print(f"📥 Progress: {downloaded / (1024*1024):.1f} MB (total unknown)")
 
-                            # Log progress for large files every 10MB
-                            if total_size > 10*1024*1024 and downloaded % (10*1024*1024) < 16384:
-                                print(".1f")
+                    # Verify download completion
+                    if total_size > 0 and downloaded >= total_size:
+                        # Move temp file to final destination
+                        os.rename(temp_file, dst)
+                        # Clean up progress file
+                        if os.path.exists(progress_file):
+                            os.remove(progress_file)
 
-            print(f"Download completed: {dst}")
-            return  # Success, exit function
+                        # Verify the downloaded file
+                        if verify_download(dst, expected_size or total_size, expected_hash):
+                            print(f"✅ Download completed and verified: {dst} ({downloaded / (1024*1024):.1f} MB)")
+                            return  # Success, exit function
+                        else:
+                            print("❌ Download verification failed, will retry...")
+                            if os.path.exists(dst):
+                                os.remove(dst)
+                            continue
+
+                    elif total_size == 0:
+                        # No size info available, assume complete
+                        os.rename(temp_file, dst)
+                        if os.path.exists(progress_file):
+                            os.remove(progress_file)
+
+                        # Verify the downloaded file if we have expectations
+                        if (expected_size or expected_hash) and not verify_download(dst, expected_size, expected_hash):
+                            print("❌ Download verification failed, will retry...")
+                            if os.path.exists(dst):
+                                os.remove(dst)
+                            continue
+
+                        print(f"✅ Download completed: {dst}")
+                        return
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 403:
@@ -127,6 +257,18 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
                 print(f"   URL endpoint: {url.split('://')[1].split('/')[0] if '://' in url else 'unknown'}")
                 if attempt == max_retries - 1:
                     raise Exception(f"S3 access forbidden (403): URL may be expired or HEAD requests not supported. Try downloading manually first.")
+            elif e.response.status_code == 416:
+                # Range not satisfiable - file may be complete
+                if os.path.exists(temp_file):
+                    actual_size = os.path.getsize(temp_file)
+                    if total_size > 0 and actual_size >= total_size:
+                        os.rename(temp_file, dst)
+                        if os.path.exists(progress_file):
+                            os.remove(progress_file)
+                        print(f"✅ File already complete: {dst}")
+                        return
+                if attempt == max_retries - 1:
+                    raise e
             else:
                 if attempt == max_retries - 1:
                     raise e
@@ -134,8 +276,8 @@ def download_file(url: str, dst: str, max_retries=3, unstable_network=False, ove
             if attempt == max_retries - 1:  # Last attempt
                 print(f"Download failed after {max_retries} attempts: {e}")
                 raise e
-            # Exponential backoff: wait 2^attempt seconds
-            wait_time = 2 ** attempt
+            # Exponential backoff: wait 2^attempt seconds, but cap at 30 seconds for large files
+            wait_time = min(30, 2 ** attempt)
             print(f"Download attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
             time.sleep(wait_time)
 
@@ -233,10 +375,25 @@ def update_models(step: Dict):
     if os.path.exists(labels_path):
         shutil.copy2(labels_path, labels_path + ".backup")
 
+    # For large model downloads, use extended timeout and unstable network settings
+    download_kwargs = {
+        "unstable_network": step.get("unstable_network", True),  # Assume unstable for model downloads
+        "overall_timeout_hours": step.get("download_timeout_hours", 4)  # 4 hours for large models
+    }
+
     if step.get("model_hef_url"):
-        download_file(step["model_hef_url"], hef_path)
+        hef_size = step.get("model_hef_size")
+        hef_hash = step.get("model_hef_hash")
+        print(f"📥 Downloading model HEF file (size: {hef_size or 'unknown'}, hash: {hef_hash or 'none'})")
+        download_file(step["model_hef_url"], hef_path,
+                     expected_size=hef_size, expected_hash=hef_hash, **download_kwargs)
+
     if step.get("labels_json_url"):
-        download_file(step["labels_json_url"], labels_path)
+        labels_size = step.get("labels_json_size")
+        labels_hash = step.get("labels_json_hash")
+        print(f"📥 Downloading labels JSON file (size: {labels_size or 'unknown'}, hash: {labels_hash or 'none'})")
+        download_file(step["labels_json_url"], labels_path,
+                     expected_size=labels_size, expected_hash=labels_hash, **download_kwargs)
 
 def update_configuration(step: Dict):
     if step.get("mode") == "s3" and step.get("config_s3_url"):
@@ -298,34 +455,53 @@ def restart_services():
     """Restart detection and OTA services after updates"""
     print("🔄 Restarting services after update...")
 
-    # Stop any running processes
-    print("🛑 Stopping existing processes...")
-    subprocess.run(["pkill", "-f", "detection.py"], check=False)
-    subprocess.run(["pkill", "-f", "edge_ota.py"], check=False)
-    subprocess.run(["pkill", "-f", "python.*detection"], check=False)  # More specific pattern
+    # Prefer systemd restart if available; avoid killing OTA process directly
+    detection_restarted = False
+    if shutil.which("systemctl"):
+        result = subprocess.run(["systemctl", "restart", "acts-detection"], check=False)
+        if result.returncode == 0:
+            detection_restarted = True
+            print("✅ Restarted acts-detection via systemd")
+            # Wait for detection service to become active (Hailo init can take time)
+            for _ in range(36):  # up to 3 minutes
+                status = subprocess.run(["systemctl", "is-active", "--quiet", "acts-detection"])
+                if status.returncode == 0:
+                    print("✅ acts-detection is active")
+                    break
+                import time
+                time.sleep(5)
+        else:
+            print("⚠️ systemd restart failed for acts-detection, falling back to script restart")
+
+    # Fallback: stop and restart detection locally
+    if not detection_restarted:
+        print("🛑 Stopping existing detection processes...")
+        subprocess.run(["pkill", "-f", "detection.py"], check=False)
+        subprocess.run(["pkill", "-f", "python.*detection"], check=False)  # More specific pattern
 
     # Give processes time to stop
     import time
-    time.sleep(30)
+    time.sleep(60)
 
     # Make scripts executable before restarting
     make_scripts_executable()
 
-    # Restart detection service
-    detection_script = os.path.join(BASE_DIR, "run_detection.sh")
-    if os.path.exists(detection_script):
-        print("🚀 Restarting detection service...")
-        try:
-            # Start in background
-            process = subprocess.Popen(
-                [detection_script],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                cwd=BASE_DIR
-            )
-            print(f"✅ Detection service restarted (PID: {process.pid})")
-        except Exception as e:
-            print(f"⚠️ Failed to restart detection service: {e}")
+    # Restart detection service (fallback path)
+    if not detection_restarted:
+        detection_script = os.path.join(BASE_DIR, "run_detection.sh")
+        if os.path.exists(detection_script):
+            print("🚀 Restarting detection service...")
+            try:
+                # Start in background
+                process = subprocess.Popen(
+                    [detection_script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=BASE_DIR
+                )
+                print(f"✅ Detection service restarted (PID: {process.pid})")
+            except Exception as e:
+                print(f"⚠️ Failed to restart detection service: {e}")
 
     print("✅ Service restart completed")
 
@@ -334,6 +510,8 @@ def git_update(step: Dict):
     tag = step.get("tag")
     do_pull = step.get("pull", True)
     restart_after_update = step.get("restart_services", True)  # Default to True
+    # Default to True so OTA restarts with new code after git updates
+    restart_ota_after_update = step.get("restart_ota", True)
 
     print("📥 Starting git update...")
     subprocess.run(["git", "fetch", "--all"], cwd=BASE_DIR, check=True)
@@ -355,6 +533,12 @@ def git_update(step: Dict):
         restart_services()
     else:
         print("ℹ️ Service restart disabled in configuration")
+
+    # Defer OTA restart until after ACK is sent
+    if restart_ota_after_update:
+        global RESTART_OTA_REQUESTED
+        RESTART_OTA_REQUESTED = True
+        print("🕒 OTA restart scheduled after ACK")
 
 def run_shell(step: Dict):
     script = step.get("script_name")
@@ -483,6 +667,7 @@ def handle_ota(payload: Dict):
 # -------------------------------------------------
 RECONNECT_BASE_DELAY = 3  # seconds
 RECONNECT_MAX_DELAY = 60  # cap backoff
+RESTART_OTA_REQUESTED = False
 
 
 async def send_register(ws, device_info: Dict):
@@ -512,7 +697,17 @@ async def health_publisher(ws, device_info: Dict, interval_seconds: int = 60):
         await asyncio.sleep(interval_seconds)
 
 
+async def schedule_ota_restart(delay_seconds: int = 5):
+    """Restart OTA service after a short delay to allow ACK to send."""
+    await asyncio.sleep(delay_seconds)
+    if shutil.which("systemctl"):
+        subprocess.run(["systemctl", "restart", "edge-ota"], check=False)
+    else:
+        print("⚠️ systemctl not available; OTA restart skipped")
+
+
 async def ws_client():
+    global RESTART_OTA_REQUESTED
     device_info = get_device_info()
     retry_attempt = 0
 
@@ -568,6 +763,9 @@ async def ws_client():
                             "command_id": data.get("command_id"),
                             "payload": ack
                         }))
+                        if RESTART_OTA_REQUESTED:
+                            RESTART_OTA_REQUESTED = False
+                            asyncio.create_task(schedule_ota_restart())
 
         except Exception as e:
             retry_attempt += 1
@@ -583,6 +781,80 @@ async def ws_client():
                     pass
 
 
+def test_continuous_download(url: str, expected_size: int = None, simulate_interrupt: bool = False):
+    """Test continuous download functionality with optional interruption simulation"""
+    import tempfile
+    import time
+
+    print("🧪 Testing continuous download functionality...")
+
+    # Create a temporary file for testing
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.test') as tmp:
+        test_file = tmp.name
+
+    try:
+        if simulate_interrupt:
+            print("🔄 Testing download resume capability...")
+
+            # Start download but interrupt after a short time
+            import threading
+            import signal
+
+            def interrupt_download():
+                time.sleep(2)  # Let download start
+                os.kill(os.getpid(), signal.SIGINT)
+
+            # Set up interrupt
+            timer = threading.Timer(2.0, interrupt_download)
+            timer.start()
+
+            try:
+                download_file(url, test_file, max_retries=1, overall_timeout_hours=0.1)
+            except KeyboardInterrupt:
+                print("⏸️ Download interrupted as planned")
+                timer.cancel()
+
+            # Check if progress file exists
+            progress_file = test_file + ".progress"
+            if os.path.exists(progress_file):
+                with open(progress_file, 'r') as f:
+                    lines = f.readlines()
+                    if len(lines) >= 1:
+                        resumed_bytes = int(lines[0].strip())
+                        print(f"📊 Progress saved: {resumed_bytes} bytes downloaded")
+
+                        # Resume download
+                        print("🔄 Resuming download...")
+                        download_file(url, test_file, expected_size=expected_size)
+                    else:
+                        print("⚠️ Progress file exists but is empty")
+            else:
+                print("⚠️ No progress file found after interrupt")
+        else:
+            # Normal download test
+            download_file(url, test_file, expected_size=expected_size)
+
+        # Verify final file
+        if os.path.exists(test_file):
+            final_size = os.path.getsize(test_file)
+            print(f"✅ Test completed. Final file size: {final_size} bytes")
+
+            if expected_size and final_size == expected_size:
+                print("✅ File size matches expected value")
+            elif expected_size:
+                print(f"⚠️ File size mismatch: expected {expected_size}, got {final_size}")
+        else:
+            print("❌ Test file not found after download")
+
+    finally:
+        # Clean up
+        for ext in ['', '.tmp', '.progress']:
+            cleanup_file = test_file + ext
+            if os.path.exists(cleanup_file):
+                os.remove(cleanup_file)
+                print(f"🧹 Cleaned up: {cleanup_file}")
+
+
 # -------------------------------------------------
 # Entry
 # -------------------------------------------------
@@ -590,8 +862,11 @@ if __name__ == "__main__":
     # Check for test URL argument
     if len(sys.argv) > 1 and sys.argv[1] == "test":
         if len(sys.argv) > 2:
-            test_download_url(sys.argv[2])
+            url = sys.argv[2]
+            simulate_interrupt = len(sys.argv) > 3 and sys.argv[3] == "interrupt"
+            expected_size = int(sys.argv[4]) if len(sys.argv) > 4 else None
+            test_continuous_download(url, expected_size, simulate_interrupt)
         else:
-            print("Usage: python edge_ota.py test <url>")
+            print("Usage: python edge_ota.py test <url> [interrupt] [expected_size]")
     else:
         asyncio.run(ws_client())
