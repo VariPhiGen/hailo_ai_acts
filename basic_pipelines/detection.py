@@ -136,10 +136,12 @@ class user_app_callback_class(app_callback_class):
         self.asyncio_thread.start()
 
         # pose estimator
-        self.pose_estimator = None
-        self.latest_pose = {}
-        self.last_pose_frame = {}
-        self.pose_frame_gap = 10
+        self.pose_hef_path = None
+        self.pose_results = {}  # {tracker_id: keypoints}
+        # self.pose_estimator = None
+        # self.latest_pose = {}
+        # self.last_pose_frame = {}
+        # self.pose_frame_gap = 10
 
         
     def calibration_check(self,flag=False):
@@ -507,20 +509,20 @@ def app_callback(pad, info, user_data,frame_type):
                     y_max=max(int((bbox.ymax()*height-user_data.pady)/user_data.ratio),0)
 
                     # -------- POSE LOGIC (NON-BLOCKING) --------
-                    if (
-                        label == "person"
-                        and user_data.pose_estimator is not None
-                        and track_id != 0
-                    ):
-                        # Throttle pose per tracker
-                        last_frame = user_data.last_pose_frame.get(track_id, -user_data.pose_frame_gap)
-                        if (user_data.frame_monitor_count - last_frame) >= user_data.pose_frame_gap:
+                    # if (
+                    #     label == "person"
+                    #     and user_data.pose_estimator is not None
+                    #     and track_id != 0
+                    # ):
+                    #     # Throttle pose per tracker
+                    #     last_frame = user_data.last_pose_frame.get(track_id, -user_data.pose_frame_gap)
+                    #     if (user_data.frame_monitor_count - last_frame) >= user_data.pose_frame_gap:
 
-                            crop = user_data.image[y_min:y_max, x_min:x_max]
-                            if crop.size != 0:
-                                pose_crops.append(crop)
-                                pose_meta.append((track_id, x_min, y_min, x_max, y_max))
-                                user_data.last_pose_frame[track_id] = user_data.frame_monitor_count
+                    #         crop = user_data.image[y_min:y_max, x_min:x_max]
+                    #         if crop.size != 0:
+                    #             pose_crops.append(crop)
+                    #             pose_meta.append((track_id, x_min, y_min, x_max, y_max))
+                    #             user_data.last_pose_frame[track_id] = user_data.frame_monitor_count
 
                     #Appending the results from Detections
                     xyxys.append([x_min,y_min,x_max,y_max])
@@ -551,26 +553,26 @@ def app_callback(pad, info, user_data,frame_type):
                 method()
 
             # --- ASYNC POSE INFERENCE ---
-            if pose_crops:
-                user_data.thread_pool.submit(
-                    run_pose_async,
-                    user_data,
-                    pose_crops,
-                    pose_meta
-                )
+            # if pose_crops:
+            #     user_data.thread_pool.submit(
+            #         run_pose_async,
+            #         user_data,
+            #         pose_crops,
+            #         pose_meta
+            #     )
 
         # --- DRAW LATEST POSE (LIVE OVERLAY) ---
-        for kp_list in user_data.latest_pose.values():
-            for (a, b) in POSE_SKELETON:
-                if a < len(kp_list) and b < len(kp_list):
-                    p1 = kp_list[a]
-                    p2 = kp_list[b]
-                    cv2.line(
-                        user_data.image,
-                        (p1["x"], p1["y"]),
-                        (p2["x"], p2["y"]),
-                        (0, 255, 0), 2
-                    )
+        # for kp_list in user_data.latest_pose.values():
+        #     for (a, b) in POSE_SKELETON:
+        #         if a < len(kp_list) and b < len(kp_list):
+        #             p1 = kp_list[a]
+        #             p2 = kp_list[b]
+        #             cv2.line(
+        #                 user_data.image,
+        #                 (p1["x"], p1["y"]),
+        #                 (p2["x"], p2["y"]),
+        #                 (0, 255, 0), 2
+        #             )
 
     return Gst.PadProbeReturn.OK
 
@@ -880,6 +882,15 @@ if __name__ == "__main__":
     user_data.active_methods=active_methods
     
     app = GStreamerDetectionApp(app_callback, user_data)
+
+    # Import pose pipeline module
+    if user_data.pose_hef_path:
+        from pose_estimation import setup_pose_pipeline, pose_probe_callback
+        pose_app = setup_pose_pipeline(user_data, pose_probe_callback)
+        
+        # Start pose pipeline in separate thread
+        pose_thread = Thread(target=pose_app.run, daemon=True)
+        pose_thread.start()
     
     try:
         print("🚀 Starting SVDS detection system...")
