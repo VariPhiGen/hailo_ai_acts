@@ -40,7 +40,7 @@ from helper_utils import (
 from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
-# from pose_estimation import PoseEstimator, run_pose_async, POSE_SKELETON
+from pose_estimation import PoseEstimator, run_pose_async, POSE_SKELETON
 
 
 
@@ -574,6 +574,11 @@ def app_callback(pad, info, user_data,frame_type):
         #                 (0, 255, 0), 2
         #             )
 
+    # Draw pose overlay if results available
+    if hasattr(user_data, 'pose_results') and user_data.pose_results:
+        from pose_estimation import draw_pose_on_frame
+        user_data.image = draw_pose_on_frame(user_data.image, user_data.pose_results)
+
     return Gst.PadProbeReturn.OK
 
 def cleanup_resources():
@@ -745,14 +750,14 @@ if __name__ == "__main__":
         user_data.pose_hef_path = None
         user_data.labels_json = None
         
-    # ~ if user_data.pose_hef_path:
-        # ~ try:
-            # ~ print("⏳ Initializing pose estimator...")
-            # ~ user_data.pose_estimator = PoseEstimator(user_data.pose_hef_path)
-            # ~ print("✅ Pose estimator initialized")
-        # ~ except Exception as e:
-            # ~ print(f"❌ Pose estimator init failed: {e}")
-            # ~ user_data.pose_estimator = None
+    if user_data.pose_hef_path:
+        try:
+            print("⏳ Initializing pose estimator...")
+            user_data.pose_estimator = PoseEstimator(user_data.pose_hef_path)
+            print("✅ Pose estimator initialized")
+        except Exception as e:
+            print(f"❌ Pose estimator init failed: {e}")
+            user_data.pose_estimator = None
 
     
 
@@ -883,14 +888,25 @@ if __name__ == "__main__":
     
     app = GStreamerDetectionApp(app_callback, user_data)
 
-    # Import pose pipeline module
+
+    # Add pose branch if configured
     if user_data.pose_hef_path:
-        from pose_estimation import setup_pose_pipeline, pose_probe_callback
-        pose_app = setup_pose_pipeline(user_data, pose_probe_callback)
-        
-        # Start pose pipeline in separate thread
-        pose_thread = Thread(target=pose_app.run, daemon=True)
-        pose_thread.start()
+        from pose_estimation import create_pose_inference_branch, setup_pose_probe
+
+        # Get detection pipeline reference
+        det_pipeline = app.pipeline  # Adjust based on actual app structure
+
+        # Find detection hailonet output pad
+        detection_net = det_pipeline.get_by_name("hailonet")  # Adjust name
+        det_output_pad = detection_net.get_static_pad("src")
+
+        # Create pose branch
+        pose_sink = create_pose_inference_branch(det_pipeline, det_output_pad, user_data)
+
+        # Setup pose results callback
+        setup_pose_probe(pose_sink, user_data)
+
+        print("✅ Pose estimation branch added to pipeline")
     
     try:
         print("🚀 Starting SVDS detection system...")

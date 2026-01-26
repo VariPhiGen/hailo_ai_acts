@@ -216,149 +216,142 @@
 
 
 """
-Pose Estimation Pipeline Module
-Runs parallel to detection pipeline, processes person crops via Hailo
+Pose Estimation Module - Integrated into Detection Pipeline
+Uses Hailo filter + secondary hailonet for pose inference
 """
 
-import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import Gst, GLib
 import hailo
-from hailo_apps.hailo_app_python.core.common.buffer_utils import get_numpy_from_buffer
-from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import GStreamerApp
 import cv2
 import numpy as np
 
-# Pose skeleton connections (same as your current file)
 POSE_SKELETON = [
-    (0, 1), (0, 2), (1, 3), (2, 4),  # Head
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Arms
-    (5, 11), (6, 12), (11, 12),  # Torso
-    (11, 13), (13, 15), (12, 14), (14, 16)  # Legs
+    (0, 1), (0, 2), (1, 3), (2, 4),
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12),
+    (11, 13), (13, 15), (12, 14), (14, 16)
 ]
 
-class PosePipelineHandler:
-    """Manages pose estimation pipeline state"""
-    
-    def __init__(self, user_data):
-        self.user_data = user_data
-        self.person_crops_queue = []  # Buffer for person crops
-        self.pose_results = {}  # {tracker_id: keypoints}
-        
-    def add_person_crop(self, crop, tracker_id, bbox):
-        """Called by detection pipeline when person detected"""
-        self.person_crops_queue.append({
-            'crop': crop,
-            'tracker_id': tracker_id,
-            'bbox': bbox
-        })
-
-def setup_pose_pipeline(user_data, probe_callback):
+def create_pose_inference_branch(pipeline, detection_output, user_data):
     """
-    Creates parallel GStreamer pipeline for pose estimation
+    Adds pose estimation branch to existing detection pipeline
     
-    Pipeline structure:
-    appsrc → videoconvert → hailonet (pose) → hailosink
+    Args:
+        pipeline: Main GStreamer pipeline
+        detection_output: Pad from detection hailonet output
+        user_data: Shared data object
+    
+    Returns:
+        pose_sink: Sink element for pose results
     """
+    from gi.repository import Gst
     
-    Gst.init(None)
+    # Create elements for pose branch
+    tee = Gst.ElementFactory.make("tee", "pose_tee")
+    queue_pose = Gst.ElementFactory.make("queue", "queue_pose")
+    hailofilter = Gst.ElementFactory.make("hailofilter", "person_filter")
+    pose_net = Gst.ElementFactory.make("hailonet", "pose_net")
+    pose_sink = Gst.ElementFactory.make("fakesink", "pose_sink")
     
-    # Create pipeline elements
-    pipeline = Gst.Pipeline()
-    
-    appsrc = Gst.ElementFactory.make("appsrc", "pose_source")
-    videoconvert = Gst.ElementFactory.make("videoconvert", "pose_convert")
-    hailonet = Gst.ElementFactory.make("hailonet", "pose_inference")
-    sink = Gst.ElementFactory.make("fakesink", "pose_sink")
-    
-    # Configure appsrc
-    appsrc.set_property('format', Gst.Format.TIME)
-    appsrc.set_property('is-live', True)
-    
-    # Configure hailonet with pose HEF
-    hailonet.set_property('hef-path', user_data.pose_hef_path)
-    hailonet.set_property('batch-size', 1)
-    
-    # Add elements to pipeline
-    for elem in [appsrc, videoconvert, hailonet, sink]:
+    # Add to pipeline
+    for elem in [tee, queue_pose, hailofilter, pose_net, pose_sink]:
         pipeline.add(elem)
     
-    # Link elements
-    appsrc.link(videoconvert)
-    videoconvert.link(hailonet)
-    hailonet.link(sink)
+    # Configure hailofilter to extract person crops
+    hailofilter.set_property('function-name', 'filter_person_class')
+    hailofilter.set_property('config-string', 'person')
     
-    # Add probe to sink pad for pose results
-    sink_pad = sink.get_static_pad("sink")
-    sink_pad.add_probe(Gst.PadProbeType.BUFFER, probe_callback, user_data)
+    # Configure pose hailonet
+    pose_net.set_property('hef-path', user_data.pose_hef_path)
+    pose_net.set_property('batch-size', 1)
+    pose_net.set_property('nms-iou-threshold', 0.45)
     
-    # Store appsrc reference for feeding crops
-    user_data.pose_appsrc = appsrc
+    # Link: detection → tee → filter → pose_net → sink
+    detection_output.link(tee)
+    tee.link(queue_pose)
+    queue_pose.link(hailofilter)
+    hailofilter.link(pose_net)
+    pose_net.link(pose_sink)
     
-    # Create app wrapper
-    class PoseGStreamerApp:
-        def __init__(self, pipeline):
-            self.pipeline = pipeline
-            self.loop = GLib.MainLoop()
-            
-        def run(self):
-            self.pipeline.set_state(Gst.State.PLAYING)
-            try:
-                self.loop.run()
-            except:
-                pass
-            finally:
-                self.pipeline.set_state(Gst.State.NULL)
-    
-    return PoseGStreamerApp(pipeline)
+    return pose_sink
 
-def pose_probe_callback(pad, info, user_data):
+def setup_pose_probe(sink_element, user_data):
     """
-    Processes pose estimation results from Hailo
-    Similar to detection app_callback but for pose keypoints
+    Attaches probe callback to pose sink
+    
+    Args:
+        sink_element: Pose pipeline sink
+        user_data: Shared data object
     """
+    from gi.repository import Gst
+    
+    sink_pad = sink_element.get_static_pad("sink")
+    sink_pad.add_probe(Gst.PadProbeType.BUFFER, pose_results_callback, user_data)
+
+def pose_results_callback(pad, info, user_data):
+    """
+    Processes pose keypoints from Hailo metadata
+    Stores results in user_data.pose_results
+    """
+    from gi.repository import Gst
     
     buffer = info.get_buffer()
     if buffer is None:
         return Gst.PadProbeReturn.OK
     
-    # Get pose detections from Hailo metadata
-    roi = hailo.get_roi_from_buffer(buffer)
-    landmarks = roi.get_objects_typed(hailo.HAILO_LANDMARKS)
-    
-    # Process pose keypoints
-    for landmark in landmarks:
-        points = landmark.get_points()
-        # Store in user_data.pose_results for overlay in detection pipeline
+    try:
+        roi = hailo.get_roi_from_buffer(buffer)
+        landmarks = roi.get_objects_typed(hailo.HAILO_LANDMARKS)
         
+        for landmark in landmarks:
+            # Get tracker ID from parent detection
+            parent_detection = landmark.get_parent()
+            if parent_detection:
+                track = parent_detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)
+                if track:
+                    tracker_id = track[0].get_id()
+                    
+                    # Extract keypoints
+                    points = landmark.get_points()
+                    keypoints = [{'x': int(p.x()), 'y': int(p.y()), 'confidence': p.confidence()} 
+                                for p in points]
+                    
+                    # Store in shared dict
+                    user_data.pose_results[tracker_id] = keypoints
+    
+    except Exception as e:
+        print(f"⚠️ Pose processing error: {e}")
+    
     return Gst.PadProbeReturn.OK
 
-def feed_person_crops_to_pipeline(user_data):
+def draw_pose_on_frame(image, pose_results):
     """
-    Thread function that feeds person crops from detection to pose pipeline
-    Call this in a separate thread from main()
-    """
+    Draws pose skeleton on frame
+    Call this from detection pipeline's frame callback
     
-    while True:
-        # Get person crops from detection callback
-        # Push to appsrc
-        # This bridges detection → pose pipeline
-        pass
-
-def draw_pose_overlay(image, pose_results):
-    """
-    Draws pose skeleton on image
-    Called from detection pipeline's frame processing
-    """
+    Args:
+        image: numpy array (frame)
+        pose_results: dict {tracker_id: keypoints}
     
+    Returns:
+        Modified image with pose overlay
+    """
     for tracker_id, keypoints in pose_results.items():
+        # Draw skeleton connections
         for (a, b) in POSE_SKELETON:
             if a < len(keypoints) and b < len(keypoints):
                 p1 = keypoints[a]
                 p2 = keypoints[b]
-                cv2.line(image, 
-                        (p1['x'], p1['y']), 
-                        (p2['x'], p2['y']),
-                        (0, 255, 0), 2)
+                
+                # Only draw if both points are confident
+                if p1['confidence'] > 0.3 and p2['confidence'] > 0.3:
+                    cv2.line(image, 
+                            (p1['x'], p1['y']), 
+                            (p2['x'], p2['y']),
+                            (0, 255, 0), 2)
+        
+        # Draw keypoints
+        for kp in keypoints:
+            if kp['confidence'] > 0.3:
+                cv2.circle(image, (kp['x'], kp['y']), 3, (255, 0, 0), -1)
     
     return image
