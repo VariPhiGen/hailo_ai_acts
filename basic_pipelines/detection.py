@@ -40,7 +40,6 @@ from helper_utils import (
 from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
-# from pose_estimation import PoseEstimator, run_pose_async, POSE_SKELETON
 
 
 
@@ -135,13 +134,12 @@ class user_app_callback_class(app_callback_class):
         self.asyncio_thread = Thread(target=self.start_asyncio_loop, daemon=True)
         self.asyncio_thread.start()
 
-        # pose estimator
+        # Pose estimation variables
         self.pose_hef_path = None
-        self.pose_results = {}  # {tracker_id: keypoints}
-        # self.pose_estimator = None
-        # self.latest_pose = {}
-        # self.last_pose_frame = {}
-        # self.pose_frame_gap = 10
+        self.pose_keypoints = []          # List of keypoint lists per person
+        self.pose_tracker_ids = []        # Tracker IDs for persons with pose
+        self.pose_detection_boxes = []    # Bounding boxes for persons with pose
+        self.pose_classes = []            # Should be all "person"
 
         
     def calibration_check(self,flag=False):
@@ -243,9 +241,7 @@ class user_app_callback_class(app_callback_class):
         path = os.path.join(SAVE_FOLDER, filename)
         with open(path, "wb") as f:
             f.write(cgi_snapshot)
-    
 
-    
     def _process_image_lightweight(self, image,anpr_status):
         """Lightweight image processing without heavy operations."""
         try:
@@ -439,148 +435,192 @@ def app_callback(pad, info, user_data,frame_type):
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
     
+    # ============================================
+    # CASE 1: ORIGINAL FRAME CAPTURE
+    # ============================================
     if frame_type == "original":
-        # print(user_data.original_frame_count)
         if format is not None and width is not None and height is not None:
             # Get video frame
             user_data.image = get_numpy_from_buffer(buffer, format, width, height)
-            # user_data.image = cv2.cvtColor(user_data.image, cv2.COLOR_BGR2RGB)
             if user_data.original_height is None:
-                user_data.original_height=height
-                user_data.original_width=width
-    else:
-        # If the user_data.use_frame is set to True, we can get the video frame from the buffer
+                user_data.original_height = height
+                user_data.original_width = width
+    # ============================================
+    # CASE 2: POSE ESTIMATION RESULTS
+    # ============================================
+    elif frame_type == "pose_estimated": # try make this minimal since the same work is done by processing as well
+        if format is None or width is None or height is None:
+            return Gst.PadProbeReturn.OK
+            
+        # Get detections from buffer (pose model outputs person detections + keypoints)
+        roi = hailo.get_roi_from_buffer(buffer)
+        detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+        
+        if len(detections) == 0:
+            return Gst.PadProbeReturn.OK
+        
+        # Calculate scaling ratios
+        ratio = min(width / user_data.original_width, height / user_data.original_height)
+        padx = int((width - user_data.original_width * ratio) / 2)
+        pady = int((height - user_data.original_height * ratio) / 2)
+        
+         # Get keypoint name-to-index mapping
+        keypoints = get_keypoints()
+        
+        # Temporary storage for this frame's pose data
+        pose_xyxys = []
+        pose_keypoints = []
+        pose_class_names = []
+        
+        for detection in detections:
+            label = detection.get_label()
+            bbox = detection.get_bbox()
+            
+            # Scale bounding box to original coordinates
+            x_min = max(int((bbox.xmin() * width - padx) / ratio), 0)
+            y_min = max(int((bbox.ymin() * height - pady) / ratio), 0)
+            x_max = min(int((bbox.xmax() * width - padx) / ratio), user_data.original_width)
+            y_max = min(int((bbox.ymax() * height - pady) / ratio), user_data.original_height)
+            
+            # Get pose landmarks
+            pose_landmarks = detection.get_objects_typed(hailo.HAILO_LANDMARKS)
+            
+            if len(pose_landmarks) > 0:
+                points = pose_landmarks[0].get_points()
+                scaled_keypoints = []
+                
+                # Scale each keypoint to original coordinates
+                for pose_id in keypoints.keys():
+                    keypoint_index = keypoints[pose_id]
+                    if keypoint_index < len(points):
+                        kp = points[keypoint_index]
+                        kp_x = min(max(int((kp.x() * width - padx) / ratio), 0), user_data.original_width)
+                        kp_y = min(max(int((kp.y() * height - pady) / ratio), 0), user_data.original_height)
+                        conf = kp.confidence()
+                        scaled_keypoints.append((kp_x, kp_y, conf))
+                
+                # Store this person's pose data
+                pose_xyxys.append([x_min, y_min, x_max, y_max])
+                pose_keypoints.append(scaled_keypoints)
+                pose_class_names.append(label)
+        
+        # Update user_data with latest pose results
+        user_data.pose_detection_boxes = pose_xyxys
+        user_data.pose_keypoints = pose_keypoints
+        user_data.pose_classes = pose_class_names
+        
+        # Optional: Store in pose_results dict by tracker_id if you have tracker for pose
+        # For now, pose branch doesn't have tracker, so we just store the latest frame's data
+    
+    # ============================================
+    # CASE 3: DETECTION RESULTS (Main Pipeline)
+    # ============================================
+    elif frame_type=="processed":
+        # Your existing detection processing code
         frame = None
         if format is not None and width is not None and height is not None:
             try:
-                # Guard against unexpected buffer types
                 if not isinstance(buffer, Gst.Buffer):
                     return Gst.PadProbeReturn.OK
 
-                buf_timestamp = buffer.pts  # nanoseconds
+                buf_timestamp = buffer.pts
                 ts = buf_timestamp / Gst.SECOND
                 user_data.time_stamp.append(ts)
 
-                # Get video frame
                 frame = get_numpy_from_buffer(buffer, format, width, height)
-                user_data.model_image=frame
+                user_data.model_image = frame
                 if user_data.recorder is not None:
                     user_data.recorder.add_frame(frame)
             except TypeError:
-                # If buffer isn't a proper Gst.Buffer, skip this frame
                 return Gst.PadProbeReturn.OK
-            
-            
+        
         # Get the detections from the buffer
         roi = hailo.get_roi_from_buffer(buffer)
         detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
 
-        #user_data.time_stamp.append(tr)
-
         # Parse the detections
         detection_count = 0
-        xyxys=[]
-        class_ids=[]
-        class_names=[]
-        confidences=[]
-        tracker_ids=[]
-        anchor_points_original=[]
-        pose_crops = []
-        pose_meta = []
+        xyxys = []
+        class_ids = []
+        class_names = []
+        confidences = []
+        tracker_ids = []
+        anchor_points_original = []
         
         if user_data.ratio is None and user_data.original_width is not None:
-            user_data.ratio=min(width/user_data.original_width,height/user_data.original_height)
-            user_data.padx=int((width - user_data.original_width*user_data.ratio)/2)
-            user_data.pady=int((height - user_data.original_height*user_data.ratio)/2)
+            user_data.ratio = min(width / user_data.original_width, height / user_data.original_height)
+            user_data.padx = int((width - user_data.original_width * user_data.ratio) / 2)
+            user_data.pady = int((height - user_data.original_height * user_data.ratio) / 2)
         else:
             for detection in detections:
                 label = detection.get_label()
                 bbox = detection.get_bbox()
                 confidence = detection.get_confidence()
+                
                 # Get track ID
                 track_id = 0
                 track = detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)
                 if len(track) == 1:
                     track_id = track[0].get_id()
                     tracker_ids.append(track_id)
-                    x_min=max(int((bbox.xmin()*width-user_data.padx)/user_data.ratio),0)
-                    y_min=max(int((bbox.ymin()*height-user_data.pady)/user_data.ratio),0)
-                    x_max=max(int((bbox.xmax()*width-user_data.padx)/user_data.ratio),0)
-                    y_max=max(int((bbox.ymax()*height-user_data.pady)/user_data.ratio),0)
+                    
+                    x_min = max(int((bbox.xmin() * width - user_data.padx) / user_data.ratio), 0)
+                    y_min = max(int((bbox.ymin() * height - user_data.pady) / user_data.ratio), 0)
+                    x_max = max(int((bbox.xmax() * width - user_data.padx) / user_data.ratio), 0)
+                    y_max = max(int((bbox.ymax() * height - user_data.pady) / user_data.ratio), 0)
 
-                    # -------- POSE LOGIC (NON-BLOCKING) --------
-                    # if (
-                    #     label == "person"
-                    #     and user_data.pose_estimator is not None
-                    #     and track_id != 0
-                    # ):
-                    #     # Throttle pose per tracker
-                    #     last_frame = user_data.last_pose_frame.get(track_id, -user_data.pose_frame_gap)
-                    #     if (user_data.frame_monitor_count - last_frame) >= user_data.pose_frame_gap:
-
-                    #         crop = user_data.image[y_min:y_max, x_min:x_max]
-                    #         if crop.size != 0:
-                    #             pose_crops.append(crop)
-                    #             pose_meta.append((track_id, x_min, y_min, x_max, y_max))
-                    #             user_data.last_pose_frame[track_id] = user_data.frame_monitor_count
-
-                    #Appending the results from Detections
-                    xyxys.append([x_min,y_min,x_max,y_max])
+                    # Appending the results from Detections
+                    xyxys.append([x_min, y_min, x_max, y_max])
                     class_ids.append(detection.get_class_id())
                     class_names.append(label)
                     confidences.append(confidence)
-                    anchor_points_original.append((((x_min+x_max)/ 2),(y_max)))
+                    anchor_points_original.append((((x_min + x_max) / 2), (y_max)))
                 
                 detection_count += 1
             
             # Updating the Activities Instance
-            user_data.detection_boxes=xyxys
-            user_data.classes= class_names
-            user_data.tracker_ids=tracker_ids
-            user_data.anchor_points_original=anchor_points_original
-            user_data.detection_score=confidences
+            user_data.detection_boxes = xyxys
+            user_data.classes = class_names
+            user_data.tracker_ids = tracker_ids
+            user_data.anchor_points_original = anchor_points_original
+            user_data.detection_score = confidences
             
             # Last n frame tracker ids
             user_data.LNFCTI.append(tracker_ids)
             user_data.last_n_frame_tracker_ids = get_unique_tracker_ids(user_data.LNFCTI)
 
-            # BEFORE: Clean every 60 seconds
-            if int((time.time()-user_data.cleaning_time_for_events)) > 120:
-                user_data.cleaning_events_data_with_last_frames() 
-                user_data.cleaning_time_for_events=time.time()
+            # Clean every 120 seconds
+            if int((time.time() - user_data.cleaning_time_for_events)) > 120:
+                user_data.cleaning_events_data_with_last_frames()
+                user_data.cleaning_time_for_events = time.time()
 
+            # Run activity methods
             for method in user_data.active_methods:
                 method()
 
-            # --- ASYNC POSE INFERENCE ---
-            # if pose_crops:
-            #     user_data.thread_pool.submit(
-            #         run_pose_async,
-            #         user_data,
-            #         pose_crops,
-            #         pose_meta
-            #     )
-
-        # --- DRAW LATEST POSE (LIVE OVERLAY) ---
-        # for kp_list in user_data.latest_pose.values():
-        #     for (a, b) in POSE_SKELETON:
-        #         if a < len(kp_list) and b < len(kp_list):
-        #             p1 = kp_list[a]
-        #             p2 = kp_list[b]
-        #             cv2.line(
-        #                 user_data.image,
-        #                 (p1["x"], p1["y"]),
-        #                 (p2["x"], p2["y"]),
-        #                 (0, 255, 0), 2
-        #             )
-
-    # Draw pose overlay if results available
-    if hasattr(user_data, 'pose_results') and user_data.pose_results:
-        from pose_estimation import draw_pose_on_frame
-        user_data.image = draw_pose_on_frame(user_data.image, user_data.pose_results)
-
     return Gst.PadProbeReturn.OK
 
+def get_keypoints():
+    return {
+        'nose': 0,
+        'left_eye': 1,
+        'right_eye': 2,
+        'left_ear': 3,
+        'right_ear': 4,
+        'left_shoulder': 5,
+        'right_shoulder': 6,
+        'left_elbow': 7,
+        'right_elbow': 8,
+        'left_wrist': 9,
+        'right_wrist': 10,
+        'left_hip': 11,
+        'right_hip': 12,
+        'left_knee': 13,
+        'right_knee': 14,
+        'left_ankle': 15,
+        'right_ankle': 16,
+    }
+    
 def cleanup_resources():
     """Clean up resources before exiting."""
     
@@ -739,7 +779,7 @@ if __name__ == "__main__":
         # Check if pose_hef path exists and is not None/empty
         if pose_hef_path and pose_hef_path != "None" and os.path.exists(pose_hef_path):
             user_data.pose_hef_path = pose_hef_path
-            print(f"✅ Pose HEF configured: {pose_hef_path}")
+            # print(f"✅ Pose HEF configured: {pose_hef_path}")
         else:
             user_data.pose_hef_path = None
             print(f"ℹ️ Pose HEF not configured or missing: {pose_hef_path}")
@@ -750,16 +790,6 @@ if __name__ == "__main__":
         user_data.pose_hef_path = None
         user_data.labels_json = None
         
-    # if user_data.pose_hef_path:
-    #     try:
-    #         print("⏳ Initializing pose estimator...")
-    #         user_data.pose_estimator = PoseEstimator(user_data.pose_hef_path)
-    #         print("✅ Pose estimator initialized")
-    #     except Exception as e:
-    #         print(f"❌ Pose estimator init failed: {e}")
-    #         user_data.pose_estimator = None
-
-    
 
     # Get save settings from config
     save_settings = config.get("save_settings", {})
@@ -888,25 +918,47 @@ if __name__ == "__main__":
     
     app = GStreamerDetectionApp(app_callback, user_data)
 
-
-    # Add pose branch if configured
-    if user_data.pose_hef_path:
-        from pose_estimation import create_pose_inference_branch, setup_pose_probe
-
-        # Get detection pipeline reference
-        det_pipeline = app.pipeline  # Adjust based on actual app structure
-
-        # Find detection hailonet output pad
-        detection_net = det_pipeline.get_by_name("hailonet")  # Adjust name
-        det_output_pad = detection_net.get_static_pad("src")
-
-        # Create pose branch
-        pose_sink = create_pose_inference_branch(det_pipeline, det_output_pad, user_data)
-
-        # Setup pose results callback
-        setup_pose_probe(pose_sink, user_data)
-
-        print("✅ Pose estimation branch added to pipeline")
+    # ========================================
+    # ATTACH POSE PROBE IF POSE IS ENABLED
+    # ========================================
+    if user_data.pose_hef_path is not None:
+        try:
+            pipeline = app.pipeline
+            
+            
+            #############################################################################
+            # Shift this pose callback identity element in gstreamer app later 
+            # The name comes from your INFERENCE_PIPELINE: f'identity name={name}_pose_estimation_callback'
+            # If you used name='inference' (default), it will be 'pose_estimation_callback'
+            pose_identity = pipeline.get_by_name("pose_estimation_callback")
+            
+            if pose_identity is None: # no use of this line
+                # Try alternate name if using custom name
+                pose_identity = pipeline.get_by_name("hailo_pose_estimation_callback")
+            
+            if pose_identity:
+                print("✅ Found pose callback identity element")
+                
+                pose_pad = pose_identity.get_static_pad("sink")
+                
+                if pose_pad:
+                    pose_pad.add_probe(
+                        Gst.PadProbeType.BUFFER, # make it non blocking
+                        app_callback,
+                        user_data,
+                        "pose_estimated"
+                    )
+                    print("✅ Pose estimation probe attached successfully")
+                else:
+                    print("⚠️ Could not get sink pad from pose identity element")
+            else:
+                print("⚠️ Pose identity element not found in pipeline")
+                print("💡 Pose pipeline may not have been created")
+                
+        except Exception as e:
+            print(f"⚠️ Error attaching pose probe: {e}")
+            import traceback
+            traceback.print_exc()
     
     try:
         print("🚀 Starting SVDS detection system...")
