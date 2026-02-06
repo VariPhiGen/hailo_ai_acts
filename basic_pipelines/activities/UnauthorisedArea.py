@@ -25,6 +25,10 @@ class UnauthorisedArea:
 
         self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
         self.timezone = pytz.timezone(self.timezone_str)
+        
+        # --- Timer for independent YOLOE checks ---
+        self.last_yoloe_check_time = 0
+        self.yoloe_interval = 1.0  # Run YOLOE every 1 second (adjust as needed)
 
     def run(self):
         if not activity_active_time(self.parameters, self.timezone):
@@ -82,7 +86,7 @@ class UnauthorisedArea:
                             self.parent.create_result_events(
                                 xywh,
                                 obj_class,
-                                "Security-Unauthorized Area",
+                                "Unauthorized Area",
                                 {"zone_name": zone_name},
                                 datetimestamp,
                                 1,
@@ -92,6 +96,34 @@ class UnauthorisedArea:
                         # Person left the zone → reset dwell timer
                         if zone_tracker_key in self.person_entry_times:
                             del self.person_entry_times[zone_tracker_key]
+                            
+            # ---------------------------------------------------------
+            # JOB B: YOLOE INDEPENDENT CHECK (The Fix)
+            # ---------------------------------------------------------
+            # We run this OUTSIDE the offender loop.
+            # This ensures YOLOE runs even if Hailo detects nothing.
+            
+            if hasattr(self.parent, 'yoloe_handler') and self.parent.yoloe_handler:
+                
+                # Check if enough time has passed since last YOLOE check
+                if (current_time - self.last_yoloe_check_time) > self.yoloe_interval:
+                    
+                    self.last_yoloe_check_time = current_time
+                    
+                    # Prepare generic metadata (since we don't have a Hailo Tracker ID)
+                    meta = {
+                        "sensor_id": self.parent.sensor_id,
+                        "check_type": "Periodic_Monitoring",
+                        "activity": "UnauthorisedArea"
+                    }
+
+                    # Trigger YOLOE with the FULL FRAME
+                    self.parent.yoloe_handler.trigger(
+                        frame=self.parent.image, 
+                        activity_name="UnauthorisedArea", 
+                        metadata=meta
+                    )
+                    # print("🚀 Triggered Periodic YOLOE Check", flush=True)
 
     def cleaning(self):
         """Clean up tracking data for persons that are no longer detected"""

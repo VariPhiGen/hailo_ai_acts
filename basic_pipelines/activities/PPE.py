@@ -117,6 +117,7 @@ class PPE:
                                         self.violation_id_data[ppe_obj_class] = []
                                     if tracker_id not in self.violation_id_data[ppe_obj_class]:
                                         self.violation_id_data[ppe_obj_class].append(tracker_id)
+                                        print("violation detected for ppe on", tracker_id)
 
                                         xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
 

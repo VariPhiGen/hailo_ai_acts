@@ -41,7 +41,8 @@ from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_p
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
 
-
+# yoloe handler
+from basic_pipelines.yoloe_handler import YOLOEHandler
 
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
@@ -140,7 +141,9 @@ class user_app_callback_class(app_callback_class):
         self.pose_tracker_ids = []        # Tracker IDs for persons with pose
         self.pose_detection_boxes = []    # Bounding boxes for persons with pose
         self.pose_classes = []            # Should be all "person"
-
+        
+        # YOLOE Handler Initialization
+        self.yoloe_handler = None
         
     def calibration_check(self,flag=False):
         """
@@ -434,6 +437,8 @@ def app_callback(pad, info, user_data,frame_type):
 
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
+    
+    print(f"DEBUG: Frame received: {frame_type}")
     
     # ============================================
     # CASE 1: ORIGINAL FRAME CAPTURE
@@ -848,6 +853,17 @@ if __name__ == "__main__":
     user_data.sensor_id = sensor_id
     user_data.results_analytics_queue = results_analytics_queue
     user_data.results_events_queue = results_events_queue
+    
+    # Initialize YOLOE Handler with the loaded config
+    try:
+        print("🚀 Initializing YOLOE Handler...")
+        user_data.yoloe_handler = YOLOEHandler(config)
+        
+        # Connect it to the Kafka/Event queue so it can report results
+        user_data.yoloe_handler.set_results_queue(results_events_queue)
+        print("✅ YOLOE Handler ready.")
+    except Exception as e:
+        print(f"⚠️ Failed to init YOLOE Handler: {e}")
     
     # Extract zones data for each activity in activities_data
     zones_data = {}
