@@ -434,6 +434,7 @@ def app_callback(pad, info, user_data,frame_type):
 
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
+    print("frame type: ",frame_type)
     
     # ============================================
     # CASE 1: ORIGINAL FRAME CAPTURE
@@ -515,7 +516,7 @@ def app_callback(pad, info, user_data,frame_type):
     # ============================================
     # CASE 3: DETECTION RESULTS (Main Pipeline)
     # ============================================
-    elif frame_type=="processed":
+    elif frame_type=="processing":
         # Your existing detection processing code
         frame = None
         if format is not None and width is not None and height is not None:
@@ -528,6 +529,10 @@ def app_callback(pad, info, user_data,frame_type):
                 user_data.time_stamp.append(ts)
 
                 frame = get_numpy_from_buffer(buffer, format, width, height)
+                if hasattr(user_data, 'pose_keypoints') and user_data.pose_keypoints:
+                    # Draw the lines directly onto the frame
+                    frame = draw_skeleton_on_frame(frame, user_data.pose_keypoints)
+                    
                 user_data.model_image = frame
                 if user_data.recorder is not None:
                     user_data.recorder.add_frame(frame)
@@ -600,6 +605,65 @@ def app_callback(pad, info, user_data,frame_type):
 
     return Gst.PadProbeReturn.OK
 
+
+def draw_skeleton_on_frame(image, pose_keypoints, confidence_threshold=0.4):
+    """
+    Draws skeleton using the specific keys from get_keypoints()
+    """
+    if image is None or not pose_keypoints:
+        return image
+
+    # Define connections (bone lines) based on your get_keypoints() keys
+    CONNECTIONS = [
+        ('nose', 'left_eye'), ('nose', 'right_eye'),
+        ('left_eye', 'left_ear'), ('right_eye', 'right_ear'),
+        ('left_shoulder', 'right_shoulder'),
+        ('left_shoulder', 'left_elbow'), ('left_elbow', 'left_wrist'),
+        ('right_shoulder', 'right_elbow'), ('right_elbow', 'right_wrist'),
+        ('left_shoulder', 'left_hip'), ('right_shoulder', 'right_hip'),
+        ('left_hip', 'right_hip'),
+        ('left_hip', 'left_knee'), ('left_knee', 'left_ankle'),
+        ('right_hip', 'right_knee'), ('right_knee', 'right_ankle')
+    ]
+
+    # Get the mapping from your existing function
+    keypoint_map = get_keypoints()
+    
+    # Colors (BGR)
+    COLOR_POINT = (0, 255, 255) # Yellow
+    COLOR_LINE = (0, 255, 0)    # Green
+
+    for person in pose_keypoints:
+        # person is a list of (x, y, conf)
+        
+        # 1. Draw Lines (Bones)
+        for start_name, end_name in CONNECTIONS:
+            idx_start = keypoint_map.get(start_name)
+            idx_end = keypoint_map.get(end_name)
+            
+            # Ensure indices exist in the detection
+            if idx_start is not None and idx_end is not None and \
+               idx_start < len(person) and idx_end < len(person):
+                
+                x1, y1, c1 = person[idx_start]
+                x2, y2, c2 = person[idx_end]
+                
+                if c1 > confidence_threshold and c2 > confidence_threshold:
+                    try:
+                        cv2.line(image, (int(x1), int(y1)), (int(x2), int(y2)), COLOR_LINE, 2)
+                    except Exception:
+                        pass
+
+        # 2. Draw Points (Joints)
+        for i, (x, y, conf) in enumerate(person):
+            if conf > confidence_threshold:
+                try:
+                    cv2.circle(image, (int(x), int(y)), 4, COLOR_POINT, -1)
+                except Exception:
+                    pass
+
+    return image
+        
 def get_keypoints():
     return {
         'nose': 0,
@@ -918,47 +982,47 @@ if __name__ == "__main__":
     
     app = GStreamerDetectionApp(app_callback, user_data)
 
-    # ========================================
-    # ATTACH POSE PROBE IF POSE IS ENABLED
-    # ========================================
-    if user_data.pose_hef_path is not None:
-        try:
-            pipeline = app.pipeline
+    # ~ # ========================================
+    # ~ # ATTACH POSE PROBE IF POSE IS ENABLED
+    # ~ # ========================================
+    # ~ if user_data.pose_hef_path is not None:
+        # ~ try:
+            # ~ pipeline = app.pipeline
             
             
-            #############################################################################
-            # Shift this pose callback identity element in gstreamer app later 
-            # The name comes from your INFERENCE_PIPELINE: f'identity name={name}_pose_estimation_callback'
-            # If you used name='inference' (default), it will be 'pose_estimation_callback'
-            pose_identity = pipeline.get_by_name("pose_estimation_callback")
+            # ~ #############################################################################
+            # ~ # Shift this pose callback identity element in gstreamer app later 
+            # ~ # The name comes from your INFERENCE_PIPELINE: f'identity name={name}_pose_estimation_callback'
+            # ~ # If you used name='inference' (default), it will be 'pose_estimation_callback'
+            # ~ pose_identity = pipeline.get_by_name("pose_estimation_callback")
             
-            if pose_identity is None: # no use of this line
-                # Try alternate name if using custom name
-                pose_identity = pipeline.get_by_name("hailo_pose_estimation_callback")
+            # ~ if pose_identity is None: # no use of this line
+                # ~ # Try alternate name if using custom name
+                # ~ pose_identity = pipeline.get_by_name("hailo_pose_estimation_callback")
             
-            if pose_identity:
-                print("✅ Found pose callback identity element")
+            # ~ if pose_identity:
+                # ~ print("✅ Found pose callback identity element")
                 
-                pose_pad = pose_identity.get_static_pad("sink")
+                # ~ pose_pad = pose_identity.get_static_pad("sink")
                 
-                if pose_pad:
-                    pose_pad.add_probe(
-                        Gst.PadProbeType.BUFFER, # make it non blocking
-                        app_callback,
-                        user_data,
-                        "pose_estimated"
-                    )
-                    print("✅ Pose estimation probe attached successfully")
-                else:
-                    print("⚠️ Could not get sink pad from pose identity element")
-            else:
-                print("⚠️ Pose identity element not found in pipeline")
-                print("💡 Pose pipeline may not have been created")
+                # ~ if pose_pad:
+                    # ~ pose_pad.add_probe(
+                        # ~ Gst.PadProbeType.BUFFER, # make it non blocking
+                        # ~ app_callback,
+                        # ~ user_data,
+                        # ~ "pose_estimated"
+                    # ~ )
+                    # ~ print("✅ Pose estimation probe attached successfully")
+                # ~ else:
+                    # ~ print("⚠️ Could not get sink pad from pose identity element")
+            # ~ else:
+                # ~ print("⚠️ Pose identity element not found in pipeline")
+                # ~ print("💡 Pose pipeline may not have been created")
                 
-        except Exception as e:
-            print(f"⚠️ Error attaching pose probe: {e}")
-            import traceback
-            traceback.print_exc()
+        # ~ except Exception as e:
+            # ~ print(f"⚠️ Error attaching pose probe: {e}")
+            # ~ import traceback
+            # ~ traceback.print_exc()
     
     try:
         print("🚀 Starting SVDS detection system...")
