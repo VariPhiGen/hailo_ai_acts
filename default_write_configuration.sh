@@ -107,6 +107,22 @@ cat > "$TARGET" <<EOF
         "relay":0
       }
     },
+    "WAH":{
+  "zones":{
+      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
+
+  },
+  "parameters":{
+      "frame_accuracy": 10,
+      "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
+      "no_zone":1,
+      "relay":1,
+      "switch_relay":[1,2],
+    "timezone":"Asia/Kolkata",
+    "missing_subcategory":"No Harness or Hooks",
+    "last_check_time":0
+}
+},
     "CameraTampering":{
       "zones":{
         "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]

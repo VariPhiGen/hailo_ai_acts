@@ -109,7 +109,7 @@
 
   },
   "parameters":{
-      "frame_accuracy": 2,
+      "frame_accuracy": 10,
       "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
       "no_zone":1,
       "relay":1,
