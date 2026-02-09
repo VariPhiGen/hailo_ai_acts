@@ -33,6 +33,28 @@ def is_object_in_zone(object_coordinates, zone_polygon):
         object_center = Point(x_center, y_center)
         return zone_polygon.contains(object_center)
 
+def is_right_in_zone(object_coordinates, zone_polygon):
+        """
+        Check if the center of the person's bounding box is inside a zone.
+        person_coordinates: [xmin, ymin, xmax, ymax]
+        zone_polygon: shapely Polygon object for the zone
+        """
+        x_right = object_coordinates[2]
+        y_center = (object_coordinates[1] + object_coordinates[3]) / 2
+        object_right = Point(x_right, y_center)
+        return zone_polygon.contains(object_right)
+
+def is_left_in_zone(object_coordinates, zone_polygon):
+        """
+        Check if the center of the person's bounding box is inside a zone.
+        person_coordinates: [xmin, ymin, xmax, ymax]
+        zone_polygon: shapely Polygon object for the zone
+        """
+        x_left = object_coordinates[0]
+        y_center = (object_coordinates[1] + object_coordinates[3]) / 2
+        object_left = Point(x_left, y_center)
+        return zone_polygon.contains(object_left)
+
 def xywh_original_percentage(box: List[float], original_width: int, original_height: int) -> List[float]:
     """
     Convert bounding box coordinates to percentage of original image dimensions.
