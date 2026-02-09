@@ -438,7 +438,7 @@ def app_callback(pad, info, user_data,frame_type):
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
     
-    print(f"DEBUG: Frame received: {frame_type}")
+    # print(f"DEBUG: Frame received: {frame_type}")
     
     # ============================================
     # CASE 1: ORIGINAL FRAME CAPTURE
@@ -520,7 +520,7 @@ def app_callback(pad, info, user_data,frame_type):
     # ============================================
     # CASE 3: DETECTION RESULTS (Main Pipeline)
     # ============================================
-    elif frame_type=="processed":
+    elif frame_type=="processing":
         # Your existing detection processing code
         frame = None
         if format is not None and width is not None and height is not None:

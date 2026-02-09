@@ -104,9 +104,11 @@ class UnauthorisedArea:
             # This ensures YOLOE runs even if Hailo detects nothing.
             
             if hasattr(self.parent, 'yoloe_handler') and self.parent.yoloe_handler:
+                print(f"DEBUG: Checking timer. Diff: {time.time() - self.last_yoloe_check_time}")
                 
                 # Check if enough time has passed since last YOLOE check
                 if (current_time - self.last_yoloe_check_time) > self.yoloe_interval:
+                    print("DEBUG: 🚀 Attempting to trigger YOLOE...")
                     
                     self.last_yoloe_check_time = current_time
                     
