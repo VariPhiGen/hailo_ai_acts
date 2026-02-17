@@ -67,6 +67,24 @@ class WAH:
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
             wah_objects=self.parameters["subcategory_mapping"]
+            check_zone_label = self.parameters.get("check_zone_label", None)
+            # If check_zone_label is empty/None, bypass scaffolding check entirely
+            check_zone_label_enabled = check_zone_label is not None and check_zone_label != "" and (
+                (isinstance(check_zone_label, list) and len(check_zone_label) > 0) or
+                (not isinstance(check_zone_label, list) and check_zone_label != "")
+            )
+            
+            if check_zone_label_enabled:
+                if isinstance(check_zone_label, list):
+                    zone_labels = check_zone_label
+                else:
+                    zone_labels = [check_zone_label]
+                zone_label_indices = [
+                    i for i, cls in enumerate(self.parent.classes) if cls in zone_labels
+                ]
+            else:
+                zone_label_indices = []
+            
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             wah_indices = [i for i, cls in enumerate(self.parent.classes) if cls in wah_objects.keys()]
 
@@ -78,87 +96,127 @@ class WAH:
                 person_detection_score = self.parent.detection_score[idx]
                 if person_detection_score < 0.7:
                     continue
-                for zone_name, zone_polygon in self.zone_data.items():
-                    # Use pre-evaluated zone check setting (evaluated once at startup)
-                    zone_check_passed = (
-                        not self.zone_check_enabled or  # If zones disabled, always pass
-                        is_bottom_in_zone(anchor, zone_polygon)   # Otherwise, check zone
-                    )
-
-                    if zone_check_passed:
-                        person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
-                        # Check if any required WAH PPE (e.g., harness/hooks) is present
-                        wah_found = False
-                        for wah_idx in wah_indices:
-                            wah_box=self.parent.detection_boxes[wah_idx]
-                            wah_obj_class=self.parent.classes[wah_idx]
-                            wah_confidence=self.parent.detection_score[wah_idx]
-                            if wah_confidence < 0.7:
-                                continue
-                            if is_left_in_zone(wah_box, person_poly) or is_right_in_zone(wah_box, person_poly):
-                                wah_found = True
+                
+                person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
+                
+                # Check if person is inside any detected check_zone_label bounding box (e.g., scaffolding)
+                # Only if check_zone_label is configured
+                person_inside_check_zone = True  # Default to True if check_zone_label is disabled
+                if check_zone_label_enabled:
+                    person_inside_check_zone = False
+                    if zone_label_indices:
+                        for zone_label_idx in zone_label_indices:
+                            zone_label_box = self.parent.detection_boxes[zone_label_idx]
+                            zone_label_poly = Polygon([
+                                (zone_label_box[0], zone_label_box[1]),
+                                (zone_label_box[0], zone_label_box[3]),
+                                (zone_label_box[2], zone_label_box[3]),
+                                (zone_label_box[2], zone_label_box[1])
+                            ])
+                            # Check if person is inside the check_zone_label bounding box
+                            if person_poly.intersects(zone_label_poly) or zone_label_poly.contains(person_poly):
+                                person_inside_check_zone = True
                                 break
+                    else:
+                        # If check_zone_label is configured but not detected, skip WAH checks for this person
+                        continue
 
-                        if tracker_id not in self.running_data[zone_name]:
-                            self.running_data[zone_name][tracker_id] = {"missing": 0}
-
-                        if wah_found:
-                            # Mark person as safe for 5 minutes if WAH PPE is detected
-                            self.safe_until[tracker_id] = time.time() + 300
-                            # Reset missing counter when any required PPE is detected
-                            self.running_data[zone_name][tracker_id]["missing"] = 0
+                # Only proceed with WAH violation checks if person is inside check_zone_label (or if check is disabled)
+                if not person_inside_check_zone:
+                    continue
+                
+                # Determine which zones to process
+                if not self.zone_check_enabled:
+                    # Zones disabled - use default zone
+                    zones_to_process = ["default"]
+                    if "default" not in self.running_data:
+                        self.running_data["default"] = {}
+                else:
+                    # Zones enabled - find zones where person is located
+                    zones_to_process = []
+                    for zone_name, zone_polygon in self.zone_data.items():
+                        # Check if person is in this zone
+                        if is_bottom_in_zone(anchor, zone_polygon):
+                            zones_to_process.append(zone_name)
+                    
+                    # If person is not in any zone, skip
+                    if not zones_to_process:
+                        continue
+                
+                # Process WAH checks for each zone
+                for zone_name in zones_to_process:
+                    # Check if any required WAH PPE (e.g., harness/hooks) is present
+                    wah_found = False
+                    for wah_idx in wah_indices:
+                        wah_box=self.parent.detection_boxes[wah_idx]
+                        wah_obj_class=self.parent.classes[wah_idx]
+                        wah_confidence=self.parent.detection_score[wah_idx]
+                        if wah_confidence < 0.7:
                             continue
+                        if is_left_in_zone(wah_box, person_poly) or is_right_in_zone(wah_box, person_poly):
+                            wah_found = True
+                            break
 
-                        # Skip further processing if person is marked safe
-                        if time.time() < self.safe_until.get(tracker_id, 0):
-                            continue
+                    if tracker_id not in self.running_data[zone_name]:
+                        self.running_data[zone_name][tracker_id] = {"missing": 0}
 
-                        # Increment missing counter when no required PPE is detected
-                        self.running_data[zone_name][tracker_id]["missing"] += 1
+                    if wah_found:
+                        # Mark person as safe for 5 minutes if WAH PPE is detected
+                        self.safe_until[tracker_id] = time.time() + 300
+                        # Reset missing counter when any required PPE is detected
+                        self.running_data[zone_name][tracker_id]["missing"] = 0
+                        continue
 
-                        if self.running_data[zone_name][tracker_id]["missing"] > self.parameters["frame_accuracy"]:
-                            if self.relay!=None and self.parameters["relay"]==1:
-                                try:
-                                    status=self.relay.state(0)
-                                    true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
-                                    for index in self.switch_relay:
-                                        if (index) not in true_indexes:
-                                            self.relay.state(index, on=True)
-                                        self.relay.start_time[index]=time.time()
-                                        print("Changed the Index")
-                                except Exception as e:
-                                    print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
+                    # Skip further processing if person is marked safe
+                    if time.time() < self.safe_until.get(tracker_id, 0):
+                        continue
 
-                            if tracker_id not in self.violation_id_data["missing"]:
-                                self.violation_id_data["missing"].append(tracker_id)
+                    # Increment missing counter when no required PPE is detected
+                    self.running_data[zone_name][tracker_id]["missing"] += 1
 
-                                xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
+                    if self.running_data[zone_name][tracker_id]["missing"] > self.parameters["frame_accuracy"]:
+                        if self.relay!=None and self.parameters["relay"]==1:
+                            try:
+                                status=self.relay.state(0)
+                                true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]
+                                for index in self.switch_relay:
+                                    if (index) not in true_indexes:
+                                        self.relay.state(index, on=True)
+                                    self.relay.start_time[index]=time.time()
+                                    print("Changed the Index")
+                            except Exception as e:
+                                print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
 
-                                ############################################################
-                                now_local = datetime.now(self.timezone)
-                                fake_utc = now_local.replace(tzinfo=pytz.utc)
-                                datetimestamp = f"{fake_utc.isoformat()}"
-                                ############################################################
+                        if tracker_id not in self.violation_id_data["missing"]:
+                            self.violation_id_data["missing"].append(tracker_id)
 
-                                missing_label = self.parameters.get(
-                                    "missing_subcategory",
-                                    "No " + " or ".join(wah_objects.values())
-                                )
+                            xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
 
-                                # Include zone info only if zones are being enforced
-                                event_metadata = {}
-                                if self.zone_check_enabled:
-                                    event_metadata["zone_name"] = zone_name
+                            ############################################################
+                            now_local = datetime.now(self.timezone)
+                            fake_utc = now_local.replace(tzinfo=pytz.utc)
+                            datetimestamp = f"{fake_utc.isoformat()}"
+                            ############################################################
 
-                                self.parent.create_result_events(
-                                    xywh,
-                                    obj_class,
-                                    f"PPE-{missing_label}",
-                                    event_metadata,
-                                    datetimestamp,
-                                    person_detection_score,
-                                    self.parent.image,
-                                )
+                            missing_label = self.parameters.get(
+                                "missing_subcategory",
+                                "No " + " or ".join(wah_objects.values())
+                            )
+
+                            # Include zone info only if zones are being enforced
+                            event_metadata = {}
+                            if self.zone_check_enabled:
+                                event_metadata["zone_name"] = zone_name
+
+                            self.parent.create_result_events(
+                                xywh,
+                                obj_class,
+                                f"PPE-{missing_label}",
+                                event_metadata,
+                                datetimestamp,
+                                person_detection_score,
+                                self.parent.image,
+                            )
 
     def cleaning(self):
         # Prune per-act violations to only tracker_ids seen in recent frames
