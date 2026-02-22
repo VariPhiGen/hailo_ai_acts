@@ -18,6 +18,9 @@ import numpy as np
 from api_handler import APIHandler
 from helper_utils import make_labelled_image
 
+import logging
+logging.getLogger("kafka").setLevel(logging.CRITICAL)  # suppress kafka internal noise
+
 # --- Optional Kafka dependency ---
 # This project can run in API-only mode (no Kafka). Import kafka-python lazily/optionally so
 # environments without it can still use API + S3 functionality.
@@ -89,6 +92,10 @@ class KafkaHandler:
         self._setup_video_recorder()
         self._start_health_monitor()
         self._setup_signal_handlers()
+        
+        # kafka cooldown
+        self._last_kafka_retry = 0
+        self._kafka_retry_interval = 30  # seconds between reconnect attempts
 
         if not self.kafka_available:
             print(
@@ -315,15 +322,38 @@ class KafkaHandler:
                 attempt += 1
         return None
 
+    # ~ def _ensure_kafka_pipeline(self) -> bool:
+        # ~ if not self.kafka_available:
+            # ~ return False
+        # ~ if self.kafka_pipeline:
+            # ~ return True
+        # ~ producer = self._create_kafka_producer(max_attempts=1)
+        # ~ if producer:
+            # ~ self.kafka_pipeline = producer
+            # ~ return True
+        # ~ return False
+        
     def _ensure_kafka_pipeline(self) -> bool:
         if not self.kafka_available:
             return False
         if self.kafka_pipeline:
             return True
+        
+        # Don't hammer the broker — respect cooldown
+        now = time.time()
+        if (now - self._last_kafka_retry) < self._kafka_retry_interval:
+            return False
+        
+        self._last_kafka_retry = now
         producer = self._create_kafka_producer(max_attempts=1)
         if producer:
             self.kafka_pipeline = producer
+            self._kafka_retry_interval = 30  # reset on success
             return True
+        
+        # Exponential backoff up to 5 minutes
+        self._kafka_retry_interval = min(self._kafka_retry_interval * 2, 300)
+        print(f"DEBUG: Kafka unavailable. Next retry in {self._kafka_retry_interval}s")
         return False
 
     def _handle_broker_failure(self):
