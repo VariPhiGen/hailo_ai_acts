@@ -36,12 +36,9 @@ from helper_utils import (
     closest_line_projected_distance, get_unique_tracker_ids, calculate_distance
 )
 
-
 from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 from hailo_apps.hailo_app_python.core.gstreamer.gstreamer_app import app_callback_class
 from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStreamerDetectionApp
-
-
 
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
@@ -434,7 +431,7 @@ def app_callback(pad, info, user_data,frame_type):
 
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
-    print("frame type: ",frame_type)
+    # print("frame type: ",frame_type)
     
     # ============================================
     # CASE 1: ORIGINAL FRAME CAPTURE
