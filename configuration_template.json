@@ -16,6 +16,10 @@
   "active_activities": [
     "UnsafeZone"
   ],
+  "yoloe_control": {
+    "enabled": 1,
+    "cooldown_sec": 3
+  },
   "radar_config": {
       "port": "/dev/ttyACMr",
       "baudrate": 9600,
@@ -111,13 +115,16 @@
   "parameters":{
       "frame_accuracy": 10,
       "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
-      "check_zone_label":["scaffolding"],
+      "condition_label":["scaffolding","bricks"],
       "no_zone":1,
       "relay":1,
       "switch_relay":[1,2],
     "timezone":"Asia/Kolkata",
     "missing_subcategory":"No Harness or Hooks",
-    "last_check_time":0
+    "last_check_time":0,
+    "yoloe":1,
+    "yoloe_interval":300,
+    "yoloe_confidence":0.1
 }
 },
 "CameraTampering":{

@@ -64,36 +64,26 @@ class WAH:
 
     def run(self):
         #print(self.parent.frame_monitor_count)
-        if time.time()-self.parameters["last_check_time"]>2:
+        if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
             wah_objects=self.parameters["subcategory_mapping"]
-            
-            # Get condition_label from parameters (replaces check_zone_label)
-            condition_label = self.parameters.get("condition_label", None)
-            # If condition_label is empty/None, bypass condition check entirely
-            condition_label_enabled = condition_label is not None and condition_label != "" and (
-                (isinstance(condition_label, list) and len(condition_label) > 0) or
-                (not isinstance(condition_label, list) and condition_label != "")
+            check_zone_label = self.parameters.get("check_zone_label", None)
+            # If check_zone_label is empty/None, bypass scaffolding check entirely
+            check_zone_label_enabled = check_zone_label is not None and check_zone_label != "" and (
+                (isinstance(check_zone_label, list) and len(check_zone_label) > 0) or
+                (not isinstance(check_zone_label, list) and check_zone_label != "")
             )
             
-            # Normalize condition_label to list
-            if condition_label_enabled:
-                if isinstance(condition_label, list):
-                    condition_labels = condition_label
+            if check_zone_label_enabled:
+                if isinstance(check_zone_label, list):
+                    zone_labels = check_zone_label
                 else:
-                    condition_labels = [condition_label]
+                    zone_labels = [check_zone_label]
+                zone_label_indices = [
+                    i for i, cls in enumerate(self.parent.classes) if cls in zone_labels
+                ]
             else:
-                condition_labels = []
-            
-            # Get YOLOE results for condition_label segmentation
-            yoloe_result_data = None
-            yoloe_confidence_threshold = self.parameters.get("yoloe_confidence", 0.0)
-            
-            if condition_label_enabled:
-                with self.parent.yoloe_lock:
-                    yoloe_results = self.parent.yoloe_results
-                    if yoloe_results and yoloe_results.get("result"):
-                        yoloe_result_data = yoloe_results["result"]
+                zone_label_indices = []
             
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             wah_indices = [i for i, cls in enumerate(self.parent.classes) if cls in wah_objects.keys()]
@@ -109,47 +99,30 @@ class WAH:
                 
                 person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]),  (box[2], box[1])])
                 
-                # Check if person is inside any detected condition_label segmentation polygon from YOLOE
-                # Only if condition_label is configured
-                person_inside_condition_zone = True  # Default to True if condition_label is disabled
-                if condition_label_enabled:
-                    # If YOLOE results are None or empty, skip WAH checks for this person
-                    if yoloe_result_data is None:
+                # Check if person is inside any detected check_zone_label bounding box (e.g., scaffolding)
+                # Only if check_zone_label is configured
+                person_inside_check_zone = True  # Default to True if check_zone_label is disabled
+                if check_zone_label_enabled:
+                    person_inside_check_zone = False
+                    if zone_label_indices:
+                        for zone_label_idx in zone_label_indices:
+                            zone_label_box = self.parent.detection_boxes[zone_label_idx]
+                            zone_label_poly = Polygon([
+                                (zone_label_box[0], zone_label_box[1]),
+                                (zone_label_box[0], zone_label_box[3]),
+                                (zone_label_box[2], zone_label_box[3]),
+                                (zone_label_box[2], zone_label_box[1])
+                            ])
+                            # Check if person is inside the check_zone_label bounding box
+                            if person_poly.intersects(zone_label_poly) or zone_label_poly.contains(person_poly):
+                                person_inside_check_zone = True
+                                break
+                    else:
+                        # If check_zone_label is configured but not detected, skip WAH checks for this person
                         continue
-                    
-                    person_inside_condition_zone = False
-                    yoloe_prompts = yoloe_result_data.get("prompt", [])
-                    yoloe_polygons = yoloe_result_data.get("polygon", [])
-                    yoloe_confidences = yoloe_result_data.get("confidence", [])
-                    
-                    # Match condition_labels with YOLOE results and check if person is inside any polygon
-                    for i, detected_label in enumerate(yoloe_prompts):
-                        # Check if this detected label matches any of our condition_labels
-                        if detected_label not in condition_labels:
-                            continue
-                        
-                        # Check confidence threshold if configured
-                        if i < len(yoloe_confidences) and yoloe_confidence_threshold > 0:
-                            if yoloe_confidences[i] < yoloe_confidence_threshold:
-                                continue
-                        
-                        # Get polygon for this detection
-                        if i < len(yoloe_polygons) and yoloe_polygons[i]:
-                            try:
-                                # Convert polygon from [[x1,y1], [x2,y2], ...] to Shapely Polygon
-                                polygon_points = [(float(pt[0]), float(pt[1])) for pt in yoloe_polygons[i]]
-                                if len(polygon_points) >= 3:  # Need at least 3 points for a valid polygon
-                                    condition_poly = Polygon(polygon_points)
-                                    # Check if person is inside or intersects the condition_label polygon
-                                    if person_poly.intersects(condition_poly) or condition_poly.contains(person_poly):
-                                        person_inside_condition_zone = True
-                                        break
-                            except Exception as e:
-                                print(f"DEBUG: Error processing YOLOE polygon for {detected_label}: {e}")
-                                continue
 
-                # Only proceed with WAH violation checks if person is inside condition_label (or if check is disabled)
-                if not person_inside_condition_zone:
+                # Only proceed with WAH violation checks if person is inside check_zone_label (or if check is disabled)
+                if not person_inside_check_zone:
                     continue
                 
                 # Determine which zones to process

@@ -35,7 +35,6 @@ from helper_utils import (
     setup_logging, encode_frame_to_bytes, is_vehicle_in_zone, crop_image_numpy,
     closest_line_projected_distance, get_unique_tracker_ids, calculate_distance
 )
-from basic_pipelines.yoloe_handler import text_prompt  # central YOLOE caller
 
 
 from hailo_apps.hailo_app_python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
@@ -107,17 +106,6 @@ class user_app_callback_class(app_callback_class):
         self.calibrate_speed = {}
         self.calibrated_classes = set()  # Track which classes are done calibrating
 
-        # Centralized YOLOE control
-        self.yoloe_activities = {}   # {activity_name: {"condition_labels": [...], "interval": int, "confidence": float, "next_run_ts": float}}
-        self.yoloe_condition_labels = []  # unique condition labels across activities
-        self.yoloe_intervals = []    # list of per-activity intervals
-        self.yoloe_results = {}      # {"result": <API JSON>, "last_run": timestamp}
-        self.yoloe_last_run_global = 0.0  # last actual YOLOE call time
-        self.yoloe_start_ts = None   # scheduler start timestamp (for initial offsets)
-        self.yoloe_lock = Lock()
-        self.yoloe_thread = None
-        self.yoloe_running = False
-
         # Queue for sending Data to Kafka
         self.results_analytics_queue = None
         self.results_events_queue = None
@@ -145,128 +133,6 @@ class user_app_callback_class(app_callback_class):
         self.main_loop = asyncio.new_event_loop()
         self.asyncio_thread = Thread(target=self.start_asyncio_loop, daemon=True)
         self.asyncio_thread.start()
-
-    # ----------------------------- YOLOE CENTRAL CONTROL ---------------------------------
-    def _init_yoloe_from_config(self, config):
-        """
-        Initialize YOLOE activities and scheduling from configuration.
-
-        Expected per activity in config["activities_data"][activity]["parameters"]:
-            - "yoloe": 1 or 0
-            - "yoloe_interval": int (seconds)
-            - "yoloe_confidence": float
-            - "condition_label": list[str]
-        """
-        self.yoloe_activities = {}
-        self.yoloe_condition_labels = []
-        self.yoloe_intervals = []
-
-        activities_data = config.get("activities_data", {})
-        now_ts = time.time()
-
-        for activity_name, details in activities_data.items():
-            params = details.get("parameters", {})
-            if not params.get("yoloe", 0):
-                continue
-
-            condition_labels = params.get("condition_label", [])
-            if not isinstance(condition_labels, list):
-                continue
-
-            interval = int(params.get("yoloe_interval", 0) or 0)
-            if interval <= 0:
-                continue
-
-            confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
-
-            self.yoloe_activities[activity_name] = {
-                "condition_labels": condition_labels,
-                "interval": interval,
-                "confidence": confidence,
-                "next_run_ts": now_ts + interval,  # first run after its own interval
-            }
-            self.yoloe_intervals.append(interval)
-            self.yoloe_condition_labels.extend(condition_labels)
-
-        # unique condition labels across all activities
-        self.yoloe_condition_labels = sorted(list(set(self.yoloe_condition_labels)))
-
-        if self.yoloe_intervals:
-            # Reference start time for information / potential diagnostics
-            self.yoloe_start_ts = now_ts
-            self.yoloe_last_run_global = 0.0
-
-    def _yoloe_should_run_for_activity(self, activity_name, now_ts):
-        """Return True if YOLOE should run now for the given activity based on its next_run_ts."""
-        info = self.yoloe_activities.get(activity_name)
-        if not info:
-            return False
-
-        interval = info.get("interval", 0)
-        if interval <= 0:
-            return False
-        next_run_ts = info.get("next_run_ts", 0.0)
-        return now_ts >= next_run_ts
-
-    def _yoloe_thread_loop(self):
-        """Background thread that periodically calls YOLOE text_prompt."""
-        # Basic safety: don't run if there are no YOLOE activities configured
-        if not self.yoloe_activities or not self.yoloe_condition_labels:
-            return
-
-        # Minimum tick of 1 second
-        base_sleep = 1.0
-
-        while self.yoloe_running:
-            now_ts = time.time()
-
-            try:
-                # Take a snapshot of current frame for YOLOE
-                image = None
-                with self.yoloe_lock:
-                    image = self.model_image.copy() if self.model_image is not None else None
-
-                if image is not None:
-                    # Decide if at least one activity needs YOLOE at this tick
-                    should_run_any = any(
-                        self._yoloe_should_run_for_activity(act_name, now_ts)
-                        for act_name in self.yoloe_activities.keys()
-                    )
-
-                    if should_run_any:
-                        # Call centralized YOLOE API with unique condition labels
-                        try:
-                            api_result = text_prompt(image, self.yoloe_condition_labels)
-                        except Exception as e:
-                            print(f"DEBUG: YOLOE text_prompt failed: {e}")
-                            api_result = None
-
-                        # Store result and timestamp
-                        if api_result is not None:
-                            with self.yoloe_lock:
-                                self.yoloe_results = {
-                                    "result": api_result,
-                                    "last_run": now_ts,
-                                }
-                                self.yoloe_last_run_global = now_ts
-
-                                # Update next_run_ts for all activities that were due
-                                for act_name, info in self.yoloe_activities.items():
-                                    if self._yoloe_should_run_for_activity(act_name, now_ts):
-                                        interval = info.get("interval", 0)
-                                        if interval > 0:
-                                            next_ts = info.get("next_run_ts", now_ts)
-                                            # Move next_run_ts forward in steps of interval until it's in the future
-                                            while next_ts <= now_ts:
-                                                next_ts += interval
-                                            info["next_run_ts"] = next_ts
-
-                # Sleep until next tick
-                time.sleep(base_sleep)
-            except Exception as e:
-                # Catch-all to avoid killing the thread on unexpected errors
-                print(f"DEBUG: YOLOE thread loop error: {e}")
-                time.sleep(base_sleep)
         
     def calibration_check(self,flag=False):
         """
@@ -827,17 +693,6 @@ if __name__ == "__main__":
     print(f"Save settings loaded from config: snapshots={user_data.save_snapshots}, rtsp_images={user_data.save_rtsp_images}")
    
         
-    # Initialize centralized YOLOE control (if configured in activities_data)
-    try:
-        user_data._init_yoloe_from_config(config)
-        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
-            user_data.yoloe_running = True
-            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
-            user_data.yoloe_thread.start()
-            print(f"YOLOE centralized scheduler started with activities: {list(user_data.yoloe_activities.keys())}")
-    except Exception as e:
-        print(f"DEBUG: Failed to initialize YOLOE centralized control: {e}")
-
     # Snapshot if configured
     if "camera_details" in config:
         try:
