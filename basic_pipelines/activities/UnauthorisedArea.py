@@ -1,48 +1,52 @@
 import time
 from datetime import datetime
 import pytz
+from shapely.geometry import Point, Polygon
 from activities.activity_helper_utils import (
     is_bottom_in_zone, xywh_original_percentage,
-    init_relay,
-    trigger_relay,
-    relay_auto_off,
-    activity_active_time
+    init_relay, trigger_relay, activity_active_time
 )
 
 class UnauthorisedArea:
     def __init__(self, parent, zone_data, parameters):
-        """
-        parent: reference to user_app_callback_class (for detections, events, etc.)
-        """
         self.parent = parent
         self.parameters = parameters
         self.zone_data = zone_data
-        self.person_entry_times = {}  # Track when each person entered the zone
+        self.person_entry_times = {}  
         self.violation_id_data = []
 
         # Initialize Relay
         self.relay, self.switch_relay = init_relay(self.parent, self.parameters)
-
         self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
         self.timezone = pytz.timezone(self.timezone_str)
-        
-        # --- Timer for independent YOLOE checks ---
-        self.last_yoloe_check_time = 0
-        self.yoloe_interval = 1.0  # Run YOLOE every 1 second (adjust as needed)
 
     def run(self):
         if not activity_active_time(self.parameters, self.timezone):
-            print("[UnauthorisedArea] Out of active time")
             return
         
-        # print("[UnauthorisedArea] called")
-        """Main entry point for this activity"""
-        if time.time()-self.parameters["last_check_time"]>1:
-            self.parameters["last_check_time"]=time.time()
-            
+        if time.time() - self.parameters["last_check_time"] > 1:
+            self.parameters["last_check_time"] = time.time()
             current_time = time.time()
 
-            # Get indices of people/objects we want to track
+            # --- 1. Fetch YOLOE Condition Settings ---
+            condition_label = self.parameters.get("condition_label", None)
+            condition_label_enabled = condition_label is not None and condition_label != "" and (
+                (isinstance(condition_label, list) and len(condition_label) > 0) or
+                (not isinstance(condition_label, list) and condition_label != "")
+            )
+            
+            condition_labels = condition_label if isinstance(condition_label, list) else [condition_label] if condition_label_enabled else []
+            yoloe_confidence_threshold = self.parameters.get("yoloe_confidence", 0.0)
+            
+            # Safely get YOLOE results from the central dictionary
+            yoloe_result_data = None
+            if condition_label_enabled:
+                with self.parent.yoloe_lock:
+                    yoloe_results = self.parent.yoloe_results
+                    if yoloe_results and yoloe_results.get("result"):
+                        yoloe_result_data = yoloe_results["result"]
+
+            # --- 2. Evaluate Hailo Detections against YOLOE Polygons ---
             offender_indices = [
                 i for i, cls in enumerate(self.parent.classes)
                 if cls in self.parameters["subcategory_mapping"]
@@ -52,88 +56,83 @@ class UnauthorisedArea:
                 obj_class = self.parent.classes[idx]
                 tracker_id = self.parent.tracker_ids[idx]
                 anchor = self.parent.anchor_points_original[idx]
+                box = self.parent.detection_boxes[idx]
+                
+                # Create a Shapely Polygon for the person bounding box
+                person_poly = Polygon([(box[0], box[1]), (box[0], box[3]), (box[2], box[3]), (box[2], box[1])])
+                
+                # Check condition logic (intersect with YOLOE mask)
+                person_inside_condition_zone = True  # Default to True if YOLOE isn't active
+                if condition_label_enabled:
+                    if yoloe_result_data is None:
+                        continue # Wait until YOLOE data is available
+                    
+                    person_inside_condition_zone = False
+                    yoloe_prompts = yoloe_result_data.get("detections", [])
+                    
+                    for det in yoloe_prompts:
+                        detected_label = det.get("prompt")
+                        if detected_label not in condition_labels:
+                            continue
+                        
+                        if det.get("confidence", 0) < yoloe_confidence_threshold:
+                            continue
+                            
+                        # Extract Polygon
+                        polygon_coords = det.get("polygon", [])
+                        if polygon_coords:
+                            try:
+                                polygon_points = [(float(pt[0]), float(pt[1])) for pt in polygon_coords]
+                                if len(polygon_points) >= 3:
+                                    condition_poly = Polygon(polygon_points)
+                                    # If the person is touching the scaffolding mask
+                                    if person_poly.intersects(condition_poly) or condition_poly.contains(person_poly):
+                                        person_inside_condition_zone = True
+                                        break
+                            except Exception as e:
+                                print(f"DEBUG: Error processing YOLOE polygon: {e}")
+                                continue
 
+                # If YOLOE condition is enabled but they aren't on the scaffolding, ignore them
+                if not person_inside_condition_zone:
+                    continue
+
+                # --- 3. Run Standard Zone Entry/Dwell Time Logic ---
                 for zone_name, zone_polygon in self.zone_data.items():
                     zone_tracker_key = f"{zone_name}_{tracker_id}"
 
                     if is_bottom_in_zone(anchor, zone_polygon):
-                        # Person inside unauthorized zone
-                        print("person found in zone", flush=True)
-
                         if zone_tracker_key not in self.person_entry_times:
-                            # Entry time
                             self.person_entry_times[zone_tracker_key] = current_time
                             continue
 
                         time_in_zone = current_time - self.person_entry_times[zone_tracker_key]
 
-                        if (
-                            time_in_zone > self.parameters["time_limit"]
-                            and tracker_id not in self.violation_id_data
-                        ):
+                        if (time_in_zone > self.parameters["time_limit"] 
+                            and tracker_id not in self.violation_id_data):
+                            
                             self.violation_id_data.append(tracker_id)
-                            print("Violation found: {tracker_id}", flush=True)
+                            print(f"Violation found: Person {tracker_id} stayed on {condition_labels[0]} too long!", flush=True)
 
-                            # Trigger relay if configured
                             if self.parameters["relay"] == 1:
                                 trigger_relay(self.relay, self.switch_relay)
 
-                            # Create violation event
-                            box = self.parent.detection_boxes[idx]
-                            xywh = xywh_original_percentage(box)
+                            xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
                             datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
 
                             self.parent.create_result_events(
-                                xywh,
-                                obj_class,
-                                "Unauthorized Area",
-                                {"zone_name": zone_name},
-                                datetimestamp,
-                                1,
-                                self.parent.image
+                                xywh, obj_class, "Unauthorized Area", 
+                                {"zone_name": zone_name, "condition": condition_labels[0]}, 
+                                datetimestamp, 1, self.parent.image
                             )
                     else:
-                        # Person left the zone → reset dwell timer
                         if zone_tracker_key in self.person_entry_times:
                             del self.person_entry_times[zone_tracker_key]
-                            
-            # ---------------------------------------------------------
-            # JOB B: YOLOE INDEPENDENT CHECK (The Fix)
-            # ---------------------------------------------------------
-            # We run this OUTSIDE the offender loop.
-            # This ensures YOLOE runs even if Hailo detects nothing.
-            
-            if hasattr(self.parent, 'yoloe_handler') and self.parent.yoloe_handler:
-                print(f"DEBUG: Checking timer. Diff: {time.time() - self.last_yoloe_check_time}")
-                
-                # Check if enough time has passed since last YOLOE check
-                if (current_time - self.last_yoloe_check_time) > self.yoloe_interval:
-                    print("DEBUG: 🚀 Attempting to trigger YOLOE...")
-                    
-                    self.last_yoloe_check_time = current_time
-                    
-                    # Prepare generic metadata (since we don't have a Hailo Tracker ID)
-                    meta = {
-                        "sensor_id": self.parent.sensor_id,
-                        "check_type": "Periodic_Monitoring",
-                        "activity": "UnauthorisedArea"
-                    }
-
-                    # Trigger YOLOE with the FULL FRAME
-                    self.parent.yoloe_handler.trigger(
-                        frame=self.parent.image, 
-                        activity_name="UnauthorisedArea", 
-                        metadata=meta
-                    )
-                    # print("🚀 Triggered Periodic YOLOE Check", flush=True)
 
     def cleaning(self):
-        """Clean up tracking data for persons that are no longer detected"""
-        # Remove violation IDs for persons no longer in frame
         self.violation_id_data = [tracker_id for tracker_id in self.violation_id_data
                                 if tracker_id in self.parent.last_n_frame_tracker_ids]
 
-        # Remove entry times for persons no longer in frame
         keys_to_remove = []
         for zone_tracker_key in self.person_entry_times.keys():
             zone_name, tracker_id = zone_tracker_key.rsplit('_', 1)

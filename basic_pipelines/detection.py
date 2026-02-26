@@ -145,6 +145,17 @@ class user_app_callback_class(app_callback_class):
         # YOLOE Handler Initialization
         self.yoloe_handler = None
         
+        # Centralized YOLOE control
+        self.yoloe_activities = {}   
+        self.yoloe_condition_labels = []  
+        self.yoloe_intervals = []    
+        self.yoloe_results = {}      
+        self.yoloe_last_run_global = 0.0  
+        self.yoloe_start_ts = None   
+        self.yoloe_lock = Lock()
+        self.yoloe_thread = None
+        self.yoloe_running = False
+        
     def calibration_check(self,flag=False):
         """
         Compute a per-class calibration factor (radar_speed / ai_speed),
@@ -309,6 +320,98 @@ class user_app_callback_class(app_callback_class):
             except Exception as e:
                 print(f"❌ Failed to replace message: {e}")
                 # Silently drop if all else fails
+                
+    # ----------------------------- YOLOE CENTRAL CONTROL ---------------------------------
+    def _init_yoloe_from_config(self, config):
+        self.yoloe_activities = {}
+        self.yoloe_condition_labels = []
+        self.yoloe_intervals = []
+
+        activities_data = config.get("activities_data", {})
+        active_activities = config.get("active_activities", [])
+        now_ts = time.time()
+
+        for activity_name, details in activities_data.items():
+            if activity_name not in active_activities:
+                continue
+                
+            params = details.get("parameters", {})
+            if not params.get("yoloe", 0):
+                continue
+
+            condition_labels = params.get("condition_label", [])
+            if not isinstance(condition_labels, list):
+                continue
+
+            interval = int(params.get("yoloe_interval", 0) or 0)
+            if interval <= 0:
+                continue
+
+            confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
+
+            self.yoloe_activities[activity_name] = {
+                "condition_labels": condition_labels,
+                "interval": interval,
+                "confidence": confidence,
+                "next_run_ts": now_ts + interval,
+            }
+            self.yoloe_intervals.append(interval)
+            self.yoloe_condition_labels.extend(condition_labels)
+
+        self.yoloe_condition_labels = sorted(list(set(self.yoloe_condition_labels)))
+        if self.yoloe_intervals:
+            self.yoloe_start_ts = now_ts
+            self.yoloe_last_run_global = 0.0
+
+    def _yoloe_should_run_for_activity(self, activity_name, now_ts):
+        info = self.yoloe_activities.get(activity_name)
+        if not info: return False
+        interval = info.get("interval", 0)
+        if interval <= 0: return False
+        return now_ts >= info.get("next_run_ts", 0.0)
+
+    def _yoloe_thread_loop(self):
+        if not self.yoloe_activities or not self.yoloe_condition_labels: return
+        base_sleep = 1.0
+
+        while self.yoloe_running:
+            now_ts = time.time()
+            try:
+                image = None
+                with self.yoloe_lock:
+                    image = self.model_image.copy() if self.model_image is not None else None
+
+                if image is not None:
+                    should_run_any = any(
+                        self._yoloe_should_run_for_activity(act_name, now_ts)
+                        for act_name in self.yoloe_activities.keys()
+                    )
+
+                    if should_run_any and self.yoloe_handler is not None:
+                        # Call your updated YOLOEHandler instance method
+                        try:
+                            api_result = self.yoloe_handler.text_prompt(image, self.yoloe_condition_labels)
+                        except Exception as e:
+                            print(f"DEBUG: YOLOE text_prompt failed: {e}")
+                            api_result = None
+
+                        if api_result is not None:
+                            with self.yoloe_lock:
+                                self.yoloe_results = {"result": api_result, "last_run": now_ts}
+                                self.yoloe_last_run_global = now_ts
+
+                                for act_name, info in self.yoloe_activities.items():
+                                    if self._yoloe_should_run_for_activity(act_name, now_ts):
+                                        interval = info.get("interval", 0)
+                                        if interval > 0:
+                                            next_ts = info.get("next_run_ts", now_ts)
+                                            while next_ts <= now_ts: next_ts += interval
+                                            info["next_run_ts"] = next_ts
+
+                time.sleep(base_sleep)
+            except Exception as e:
+                print(f"DEBUG: YOLOE thread loop error: {e}")
+                time.sleep(base_sleep)
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
@@ -854,14 +957,32 @@ if __name__ == "__main__":
     user_data.results_analytics_queue = results_analytics_queue
     user_data.results_events_queue = results_events_queue
     
-    # Initialize YOLOE Handler with the loaded config
+    # Initialize YOLOE Handler & Centralized Scheduler
     try:
         print("🚀 Initializing YOLOE Handler...")
         user_data.yoloe_handler = YOLOEHandler(config)
+        results_yoloe_queue = queue.Queue(maxsize=500) # yoloe queue
+        user_data.yoloe_handler.set_results_queue(results_yoloe_queue)
+        user_data.results_yoloe_queue = results_yoloe_queue
         
-        # Connect it to the Kafka/Event queue so it can report results
-        user_data.yoloe_handler.set_results_queue(results_events_queue)
-        print("✅ YOLOE Handler ready.")
+        user_data._init_yoloe_from_config(config)
+        
+        # --- TEMPORARY DEBUG ---
+        for act_name, details in config.get("activities_data", {}).items():
+            params = details.get("parameters", {})
+            print(f"DEBUG YOLOE check [{act_name}]:")
+            print(f"  yoloe flag     : {params.get('yoloe', 0)}")
+            print(f"  condition_label: {params.get('condition_label', 'MISSING')}")
+            print(f"  yoloe_interval : {params.get('yoloe_interval', 'MISSING')}")
+        print(f"DEBUG: yoloe_activities populated = {bool(user_data.yoloe_activities)}")
+        print(f"DEBUG: yoloe_condition_labels     = {user_data.yoloe_condition_labels}")
+        # --- END DEBUG ---
+
+        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
+            user_data.yoloe_running = True
+            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
+            user_data.yoloe_thread.start()
+            print(f"✅ YOLOE centralized scheduler started for: {list(user_data.yoloe_activities.keys())}")
     except Exception as e:
         print(f"⚠️ Failed to init YOLOE Handler: {e}")
     

@@ -1,265 +1,233 @@
-import threading
-import requests
 import cv2
-import time
+import numpy as np
+import requests
 import json
 import logging
-from datetime import datetime
+from pathlib import Path
 
-YOLOE_SERVER_URL = "http://localhost:5000/predict"
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+YOLOE_SERVER_URL = "http://localhost:5000/predict_prompt"
+
 
 class YOLOEHandler:
-    def __init__(self, config):
-        self.config = config.get("yoloe_control", {})
-        self.enabled = self.config.get("enabled", 0)
-        self.target_activities = set(self.config.get("activities", []))
-        self.cooldown = self.config.get("cooldown_sec", 2)
+    def __init__(self, config=None):
+        """
+        config: Full configuration.json dictionary loaded by detection.py.
 
-        # ── Key fix: cooldown is now per (activity, tracker_id) ──────── #
-        self.last_trigger_time = {}   # key: (activity_name, tracker_id)
-
+        The output JSON file is named after sensor_id or camera_id from config,
+        e.g. "cam_01.json". Falls back to "detections.json" if neither is set.
+        """
+        self.config = config or {}
         self.results_queue = None
 
-        # ── Circuit-breaker for YOLOE server failures ─────────────────── #
-        self._failure_count = 0
-        self._pause_until = 0.0
-        self._lock = threading.Lock()
+        sensor_id = (
+            self.config.get("sensor_id")
+            or self.config.get("camera_details", {}).get("camera_id")
+            or self.config.get("camera_id")
+            or "detections"
+        )
+        self._output_path = Path(f"{sensor_id}.json")
+        logging.info(f"YOLOEHandler ready — detections will be saved to '{self._output_path}'")
 
     def set_results_queue(self, queue):
+        """Pass results into a queue for downstream consumers (e.g. Kafka)."""
         self.results_queue = queue
 
-    def should_trigger(self, activity_name, tracker_id="global"):
-        if not self.enabled:
-            return False
-        if activity_name not in self.target_activities:
-            return False
-        # Circuit-breaker: are we in a pause window?
-        if time.time() < self._pause_until:
-            return False
-        now = time.time()
-        key = (activity_name, tracker_id)
-        if (now - self.last_trigger_time.get(key, 0)) < self.cooldown:
-            return False
-        return True
+    # ------------------------------------------------------------------
+    # Image encoding
+    # ------------------------------------------------------------------
 
-    def trigger(self, frame, activity_name, metadata=None, on_result=None):
+    def _encode_frame(self, image_input) -> bytes:
         """
-        on_result: optional callable(result_dict, metadata) invoked after
-                   _handle_result(), letting the calling activity update its
-                   own state (e.g. mark violation_sent_for).
+        Convert any image input into JPEG bytes for the POST request.
+
+        Accepted types (mirrors what the hailo pipeline can produce):
+          - numpy.ndarray  : any dtype, grayscale / BGR / BGRA
+          - bytes          : already-encoded (JPEG, PNG, BMP, TIFF, WEBP, ...)
+                             OR raw numpy .tobytes() dump
+          - bytearray      : same as bytes
+          - str / Path     : file path — read and encode to JPEG
         """
-        tracker_id = metadata.get("hailo_tracker_id", "global") if metadata else "global"
-        if not self.should_trigger(activity_name, tracker_id):
-            return
+        # ---- numpy array -----------------------------------------------
+        if isinstance(image_input, np.ndarray):
+            frame = image_input
 
-        key = (activity_name, tracker_id)
-        self.last_trigger_time[key] = time.time()
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
 
-        # ── Crop to person bbox before sending for better accuracy ────── #
-        send_frame = frame
-        if metadata and "target_bbox" in metadata:
+            if frame.ndim == 2:                              # grayscale
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            elif frame.ndim == 3 and frame.shape[2] == 4:   # BGRA / RGBA
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            elif frame.ndim == 3 and frame.shape[2] == 1:   # single-channel 3-D
+                frame = cv2.cvtColor(frame.squeeze(), cv2.COLOR_GRAY2BGR)
+
+            success, buf = cv2.imencode(".jpg", frame)
+            if not success:
+                raise ValueError("Failed to encode numpy array to JPEG.")
+            return buf.tobytes()
+
+        # ---- raw bytes / bytearray -------------------------------------
+        elif isinstance(image_input, (bytes, bytearray)):
+            raw = bytes(image_input)
+
+            # Try standard encoded formats first (JPEG, PNG, BMP, TIFF, WEBP…)
+            np_arr = np.frombuffer(raw, dtype=np.uint8)
+            frame  = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is not None:
+                success, buf = cv2.imencode(".jpg", frame)
+                if not success:
+                    raise ValueError("Failed to re-encode image bytes to JPEG.")
+                return buf.tobytes()
+
+            # Fallback: raw numpy .tobytes() dump (uint8, 3-channel BGR)
+            total = len(raw)
+            if total % 3 == 0:
+                pixel_count = total // 3
+                for width in [3840, 2560, 1920, 1440, 1280, 1024, 960, 848, 800, 720, 640, 480, 320]:
+                    if pixel_count % width == 0:
+                        height = pixel_count // width
+                        try:
+                            frame   = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
+                            success, buf = cv2.imencode(".jpg", frame)
+                            if success:
+                                logging.warning(
+                                    f"Decoded raw numpy bytes as {height}x{width} BGR frame."
+                                )
+                                return buf.tobytes()
+                        except ValueError:
+                            continue
+
+            raise ValueError("Could not decode bytes as any known image format.")
+
+        # ---- file path -------------------------------------------------
+        elif isinstance(image_input, (str, Path)):
+            frame = cv2.imread(str(image_input), cv2.IMREAD_COLOR)
+            if frame is None:
+                raise ValueError(f"Could not read image from path: {image_input}")
+            success, buf = cv2.imencode(".jpg", frame)
+            if not success:
+                raise ValueError(f"Failed to encode '{image_input}' to JPEG.")
+            return buf.tobytes()
+
+        else:
+            raise TypeError(f"Unsupported image_input type: {type(image_input)}")
+
+    # ------------------------------------------------------------------
+    # JSON persistence
+    # ------------------------------------------------------------------
+
+    def _append_to_json(self, record: dict):
+        """Append one frame's detection record to the output JSON array file."""
+        records = []
+        if self._output_path.exists():
             try:
-                xmin, ymin, xmax, ymax = [int(v) for v in metadata["target_bbox"]]
-                h, w = frame.shape[:2]
-                # Clamp to frame bounds
-                xmin, ymin = max(0, xmin), max(0, ymin)
-                xmax, ymax = min(w, xmax), min(h, ymax)
-                crop = frame[ymin:ymax, xmin:xmax]
-                if crop.size > 0:
-                    send_frame = crop
-            except Exception:
-                pass  # fall back to full frame
+                with open(self._output_path, "r") as f:
+                    records = json.load(f)
+                if not isinstance(records, list):
+                    records = [records]
+            except (json.JSONDecodeError, IOError):
+                records = []
 
-        t = threading.Thread(
-            target=self._send_request,
-            args=(send_frame.copy(), frame.copy(), activity_name, metadata, on_result)
-        )
-        t.daemon = True
-        t.start()
+        records.append(record)
 
-    def _send_request(self, send_frame, full_frame, activity_name, metadata, on_result):
+        with open(self._output_path, "w") as f:
+            json.dump(records, f, indent=2)
+
+    # ------------------------------------------------------------------
+    # Main inference call
+    # ------------------------------------------------------------------
+
+    def text_prompt(self, image_input, prompts, conf=0.05):
+        """
+        Send a video frame to the YOLOE server and save the detection result.
+
+        Parameters
+        ----------
+        image_input : np.ndarray | bytes | bytearray | str | Path
+            The frame from the hailo (or any) pipeline.
+            All formats are accepted — see _encode_frame() for details.
+
+        prompts : list[str] | str
+            Object class names to detect, e.g. ["Harness", "Hook"].
+
+        conf : float
+            Confidence threshold (default 0.05).
+
+        Returns
+        -------
+        dict | None
+            Parsed JSON response from the server, or None on failure.
+            Response shape:
+            {
+                "inference_timestamp": "<ISO-8601>",
+                "inference_start":     "<ISO-8601>",
+                "detections": [
+                    {
+                        "prompt":       "Harness",
+                        "confidence":   0.87,
+                        "bounding_box": [x1, y1, x2, y2],
+                        "polygon":      [[x, y], ...]
+                    },
+                    ...
+                ]
+            }
+        """
         try:
-            _, img_encoded = cv2.imencode('.jpg', send_frame)
-            files = {'file': ('image.jpg', img_encoded.tobytes(), 'image/jpeg')}
-            response = requests.post(YOLOE_SERVER_URL, files=files, timeout=10.0)
+            encoded_bytes = self._encode_frame(image_input)
+        except (ValueError, TypeError) as e:
+            logging.error(f"Frame encoding failed: {e}")
+            return None
 
-            if response.status_code == 200:
-                # Success — reset failure counter
-                with self._lock:
-                    self._failure_count = 0
+        prompts_str = (
+            ",".join(str(p).strip() for p in prompts)
+            if isinstance(prompts, list)
+            else str(prompts)
+        )
+
+        files = {"file": ("frame.jpg", encoded_bytes, "image/jpeg")}
+        data  = {"prompts": prompts_str, "conf": float(conf)}
+
+        try:
+            response = requests.post(
+                YOLOE_SERVER_URL,
+                files=files,
+                data=data,
+                timeout=120.0   # generous — first call may download mobileclip_blt.ts
+            )
+            response.raise_for_status()
+
+            try:
                 result = response.json()
-                self._handle_result(result, activity_name, metadata, full_frame, on_result)
-            else:
-                logging.error(f"YOLOE Server Error: {response.status_code}")
-                self._record_failure()
+            except requests.exceptions.JSONDecodeError:
+                logging.error(
+                    f"Server returned non-JSON (status {response.status_code}). "
+                    f"Body preview: '{response.text[:200]}'"
+                )
+                return None
 
         except requests.exceptions.Timeout:
-            logging.warning(f"YOLOE Request Timed Out for {metadata.get('hailo_tracker_id','?')}")
-            self._record_failure()
-        except Exception as e:
-            logging.error(f"YOLOE Request Failed: {e}")
-            self._record_failure()
+            logging.error("YOLOE Server timed out — model may still be loading.")
+            return None
+        except requests.exceptions.ConnectionError:
+            logging.error("Cannot reach YOLOE Server — is the Docker container running?")
+            return None
+        except requests.exceptions.HTTPError:
+            logging.error(f"Server HTTP error {response.status_code}: {response.text[:200]}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {e}")
+            return None
 
-    def _record_failure(self):
-        """Exponential back-off circuit breaker."""
-        with self._lock:
-            self._failure_count += 1
-            pause = min(10 * (2 ** (self._failure_count - 1)), 300)  # cap at 5 min
-            self._pause_until = time.time() + pause
-            logging.warning(f"YOLOE: {self._failure_count} failures. Pausing for {pause}s")
+        # Persist to disk
+        self._append_to_json(result)
 
-    def _handle_result(self, result, activity_name, metadata, frame, on_result=None):
-        detections = result.get("detections", [])
-        detected_classes = [d['class'] for d in detections]
-
-        rule           = metadata.get('rule', 'report_all')
-        required_items = metadata.get('required_items', [])
-        tracker_id     = metadata.get('hailo_tracker_id', 'unknown')
-
-        messages_to_send = []
-
-        try:
-            _, img_encoded = cv2.imencode('.jpg', frame)
-            img_bytes = img_encoded.tobytes()
-            h, w = frame.shape[:2]
-        except Exception as e:
-            logging.error(f"Failed to encode image: {e}")
-            return
-
-        # ── RULE: must_detect ─────────────────────────────────────────── #
-        if rule == 'must_detect':
-            found_items  = {item: False for item in required_items}
-            found_confs  = {}
-
-            for det in detections:
-                cls = det['class']
-                if cls in found_items:
-                    found_items[cls] = True
-                    found_confs[cls] = det['confidence']
-
-            # Terminal summary — always shown so operator can see live state
-            status_parts = []
-            for item in required_items:
-                if found_items[item]:
-                    status_parts.append(
-                        f"✅ {item.upper()} (conf: {found_confs[item]:.2f})"
-                    )
-                else:
-                    status_parts.append(f"❌ {item.upper()} MISSING")
-
-            print(
-                f"[HarnessCheck] Person {tracker_id} → "
-                + " | ".join(status_parts),
-                flush=True
-            )
-
-            missing_items = [item for item in required_items if not found_items[item]]
-
-            # Build violation event only when something is missing
-            if missing_items:
-                print(
-                    f"⚠️  VIOLATION: Person {tracker_id} missing: "
-                    f"{', '.join(missing_items)}",
-                    flush=True
-                )
-                target_bbox = metadata.get('target_bbox', [0, 0, w, h])
-                xmin, ymin, xmax, ymax = target_bbox
-                xywh_pct = [
-                    (xmin * 100) / w,
-                    (ymin * 100) / h,
-                    ((xmax - xmin) * 100) / w,
-                    ((ymax - ymin) * 100) / h,
-                ]
-                formatted_bbox = [{
-                    "xywh":        xywh_pct,
-                    "class_name":  "violation",
-                    "subcategory": f"Missing {','.join(missing_items)}",
-                    "confidence":  1.0,
-                    "parameters":  {},
-                    "anpr":        "False",
-                }]
-                messages_to_send.append({
-                    "type":       "VIOLATION_EVENT",
-                    "tracker_id": str(tracker_id),
-                    "bbox_data":  formatted_bbox,
-                    "missing":    missing_items,   # pass back to callback
-                })
-            else:
-                print(
-                    f"✅ Person {tracker_id} — All required items present. No violation.",
-                    flush=True
-                )
-
-        # ── RULE: must_not_detect ─────────────────────────────────────── #
-        elif rule == 'must_not_detect':
-            for i, det in enumerate(detections):
-                if det['class'] in required_items:
-                    messages_to_send.append({
-                        "type":       "VIOLATION_EVENT",
-                        "tracker_id": f"yoloe_{i}",
-                        "bbox_data":  self._format_bbox(det, w, h),
-                    })
-
-        # ── RULE: report_all (default) ────────────────────────────────── #
-        else:
-            for i, det in enumerate(detections):
-                messages_to_send.append({
-                    "type":       "YOLOE_DETECTION",
-                    "tracker_id": f"yoloe_{i}",
-                    "bbox_data":  self._format_bbox(det, w, h),
-                })
-
-        # ── Push to Kafka queue ───────────────────────────────────────── #
-        for msg in messages_to_send:
-            if self.results_queue:
-                full_message = {
-                    "sensor_id":               metadata.get("sensor_id", "Unknown"),
-                    "type":                    msg["type"],
-                    "activity":                activity_name,
-                    "timestamp":               datetime.now().isoformat(),
-                    "tracker_id":              msg["tracker_id"],
-                    "absolute_bbox":           msg["bbox_data"],
-                    "org_img":                 img_bytes,
-                    "snap_shot":               img_bytes,
-                    "video":                   None,
-                    "triggered_by_hailo_event": metadata,
-                    "imgsz":                   f"{w}:{h}",
-                }
-                try:
-                    self.results_queue.put_nowait(full_message)
-                except Exception as e:
-                    logging.error(f"Queue Error: {e}")
-
-        # ── Result callback → lets the activity update its own state ──── #
-        if callable(on_result):
+        # Forward to Kafka / downstream queue if one is attached
+        if self.results_queue is not None:
             try:
-                on_result(
-                    {
-                        "missing_items": [
-                            m.get("missing", []) for m in messages_to_send
-                            if m["type"] == "VIOLATION_EVENT"
-                        ],
-                        "violation": bool(messages_to_send),
-                        "tracker_id": tracker_id,
-                    },
-                    metadata,
-                )
-            except Exception as e:
-                logging.error(f"on_result callback error: {e}")
+                self.results_queue.put_nowait(result)
+            except Exception:
+                pass
 
-    def _format_bbox(self, det, w, h):
-        xmin, ymin, xmax, ymax = det['bbox']
-        xywh_pct = [
-            (xmin * 100) / w,
-            (ymin * 100) / h,
-            ((xmax - xmin) * 100) / w,
-            ((ymax - ymin) * 100) / h,
-        ]
-        return [{
-            "xywh":       xywh_pct,
-            "class_name": det['class'],
-            "subcategory": det['class'],
-            "confidence": det['confidence'],
-            "parameters": {},
-            "anpr":       "False",
-        }]
+        return result

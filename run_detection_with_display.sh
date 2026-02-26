@@ -20,6 +20,20 @@ print_success()  { echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] ✅${NC} $1";
 print_warning()  { echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️${NC} $1"; }
 print_error()    { echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ❌${NC} $1"; }
 
+# --- Graceful Shutdown Trap ---
+cleanup() {
+    echo ""
+    print_warning "Ctrl+C detected! Initiating graceful shutdown..."
+    print_status "Stopping background YOLOE Docker container..."
+    docker stop yoloe-server 2>/dev/null || true
+    print_success "System completely cleaned up. Exiting safely."
+    exit 0
+}
+
+# to run the 'cleanup' function
+trap cleanup SIGINT SIGTERM
+# -----------------------------------
+
 # Function to read camera input (RTSP or USB)
 read_camera_input_from_config() {
     local config_file="$1"
@@ -52,6 +66,28 @@ read_camera_input_from_config() {
     print_error "No valid camera input found in $config_file"
     return 1
 }
+
+# Function to start the Docker container in the background ---
+start_yoloe_docker() {
+    print_status "Setting up display permissions for Docker..."
+    xhost +local:docker || true
+
+    print_status "Cleaning up any existing YOLOE containers..."
+    # If the script stopped abruptly last time, this ensures the old container is cleared
+    docker stop yoloe-server 2>/dev/null || true
+
+    print_status "Starting YOLOE Docker container in background..."
+    docker run -d --rm \
+      --name yoloe-server \
+      --net=host \
+      -e DISPLAY=$DISPLAY \
+      -v /tmp/.X11-unix:/tmp/.X11-unix \
+      -v /home/arresto/yoloe:/app \
+      yoloe-conda
+
+    print_success "YOLOE Docker container is running."
+}
+# ---------------------------------------------------------------------
 
 print_status "Reading camera input from $CONFIG_FILE"
 CAMERA_INPUT=$(read_camera_input_from_config "$CONFIG_FILE")
@@ -89,6 +125,15 @@ get_sleep_delay() {
     fi
     echo $delay
 }
+
+start_yoloe_docker
+
+print_status "Waiting for YOLOE server to initialize and load the model..."
+# We ping the default FastAPI /docs endpoint until it responds
+while ! curl -s http://localhost:5000/docs > /dev/null; do
+    sleep 2
+done
+print_success "YOLOE server is up and accepting connections!"
 
 attempt=1
 failed_attempts=0
