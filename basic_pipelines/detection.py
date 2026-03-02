@@ -347,7 +347,7 @@ class user_app_callback_class(app_callback_class):
             if interval <= 0:
                 continue
 
-            confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
+            confidence = float(params.get("yoloe_confidence", 0.0) or 0.1)
 
             self.yoloe_activities[activity_name] = {
                 "condition_labels": condition_labels,
