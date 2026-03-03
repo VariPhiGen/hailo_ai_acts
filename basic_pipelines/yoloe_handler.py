@@ -4,10 +4,13 @@ import requests
 import json
 import logging
 from pathlib import Path
+import os
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-YOLOE_SERVER_URL = "http://localhost:5000/predict_prompt"
+SERVER_IP = os.getenv("YOLOE_SERVER_IP", "localhost")
+SERVER_PORT = os.getenv("YOLOE_SERVER_PORT", "5000")
+YOLOE_SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}/predict_prompt"
 
 
 class YOLOEHandler:

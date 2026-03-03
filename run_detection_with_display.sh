@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Network Configuration ---
+# Defaults to localhost:5000 if not provided via environment variables
+export YOLOE_SERVER_IP="${YOLOE_SERVER_IP:-localhost}"
+export YOLOE_SERVER_PORT="${YOLOE_SERVER_PORT:-5000}"
+
 # Configuration
 CONFIG_FILE="${1:-configuration.json}"
 MAX_RETRIES=999999  # Run indefinitely
@@ -67,28 +72,6 @@ read_camera_input_from_config() {
     return 1
 }
 
-# Function to start the Docker container in the background ---
-start_yoloe_docker() {
-    print_status "Setting up display permissions for Docker..."
-    xhost +local:docker || true
-
-    print_status "Cleaning up any existing YOLOE containers..."
-    # If the script stopped abruptly last time, this ensures the old container is cleared
-    docker stop yoloe-server 2>/dev/null || true
-
-    print_status "Starting YOLOE Docker container in background..."
-    docker run -d --rm \
-      --name yoloe-server \
-      --net=host \
-      -e DISPLAY=$DISPLAY \
-      -v /tmp/.X11-unix:/tmp/.X11-unix \
-      -v /home/arresto/yoloe:/app \
-      yoloe-conda
-
-    print_success "YOLOE Docker container is running."
-}
-# ---------------------------------------------------------------------
-
 print_status "Reading camera input from $CONFIG_FILE"
 CAMERA_INPUT=$(read_camera_input_from_config "$CONFIG_FILE")
 if [[ $? -ne 0 ]]; then
@@ -99,6 +82,7 @@ fi
 print_status "Starting SVDS Detection Pipeline"
 print_status "Config File: $CONFIG_FILE"
 print_status "Camera Input: $CAMERA_INPUT"
+print_status "Target YOLOE Server: http://${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}"
 
 # Function to run detection
 run_detection() {
@@ -126,14 +110,13 @@ get_sleep_delay() {
     echo $delay
 }
 
-start_yoloe_docker
-
-print_status "Waiting for YOLOE server to initialize and load the model..."
-# We ping the default FastAPI /docs endpoint until it responds
-while ! curl -s http://localhost:5000/docs > /dev/null; do
-    sleep 2
+print_status "Checking connection to remote YOLOE server at ${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}..."
+# Ping the FastAPI endpoint until it responds, proving the remote server is alive
+while ! curl -s "http://${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}/docs" > /dev/null; do
+    print_warning "Cannot connect to YOLOE server. Retrying in 5 seconds..."
+    sleep 5
 done
-print_success "YOLOE server is up and accepting connections!"
+print_success "Connected to YOLOE server!"
 
 attempt=1
 failed_attempts=0
