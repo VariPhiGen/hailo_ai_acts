@@ -82,7 +82,13 @@ fi
 print_status "Starting SVDS Detection Pipeline"
 print_status "Config File: $CONFIG_FILE"
 print_status "Camera Input: $CAMERA_INPUT"
-print_status "Target YOLOE Server: http://${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}"
+
+# Tell the user what mode we are running in based on their input
+if [[ "${YOLOE_SERVER_IP}" == "localhost" ]]; then
+    print_status "No external IP provided. Running in pure Hailo mode (YOLOE bypassed)."
+else
+    print_status "Target YOLOE Server: http://${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}. Starting immediately..."
+fi
 
 # Function to run detection
 run_detection() {
@@ -109,14 +115,6 @@ get_sleep_delay() {
     fi
     echo $delay
 }
-
-print_status "Checking connection to remote YOLOE server at ${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}..."
-# Ping the FastAPI endpoint until it responds, proving the remote server is alive
-while ! curl -s "http://${YOLOE_SERVER_IP}:${YOLOE_SERVER_PORT}/docs" > /dev/null; do
-    print_warning "Cannot connect to YOLOE server. Retrying in 5 seconds..."
-    sleep 5
-done
-print_success "Connected to YOLOE server!"
 
 attempt=1
 failed_attempts=0

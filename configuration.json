@@ -1,335 +1,1 @@
-{
-  "sensor_id": "DEEPAK 26TOPS TESTING",
-
-  "default_arguments": {
-    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8/yolov8m.hef",
-    "pose_hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8/yolov8m_pose.hef",
-    "labels-json": "/home/arresto/hailo_ai_acts/resources/models/hailo8/ppe-labels.json"
-  },
-
-  "dashboard_connectivity": { "api": 1, "kafka": 1 },
-
-  "available_activities": [
-    "traffic_overspeeding_distancewise",
-    "TimeBasedUnauthorizedAccess",
-    "UnsafeZone",
-    "PPE",
-    "UnauthorisedArea",
-    "HarnessViolation",
-    "UnauthorisedActivity",
-    "WAH"
-  ],
-
-  "active_activities": ["UnauthorisedArea"],
-
-  "radar_config": {
-    "port": "/dev/ttyACMr",
-    "baudrate": 9600,
-    "max_age": 10,
-    "max_diff_rais": 10
-  },
-
-  "camera_details": {
-    "RTSP_URL": "/home/arresto/hailo_ai_acts/resources/videos/IMG_5818.mp4",
-    "camera_ip": "172.16.16.151",
-    "username": "admin",
-    "password": "Arresto%402024",
-    "IF_USB_CAMERA": "False",
-    "USB_CAM_INPUT": ""
-  },
-
-  "activities_data": {
-
-    "traffic_overspeeding_distancewise": {
-      "zones": {
-        "zone1": [[28,942],[2643,1037],[2620,1177],[39,1054]]
-      },
-      "parameters": {
-        "real_distance": 10,
-        "speed_limit": { "car": 30, "truck": 30, "motorcycle": 30 },
-        "calibration": 1.3668,
-        "radar_calibration": 1,
-        "lines": { "lane1": [[1304,925],[1232,1110]] }
-      }
-    },
-
-    "TimeBasedUnauthorizedAccess": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["person"],
-        "frame_accuracy": 2,
-        "relay": 1,
-        "switch_relay": [1,2],
-        "scheduled_time": [{
-          "time_start_end": [["03:00","17:00"],["18:00","18:30"]],
-          "days": ["Monday","Wednesday","Friday"]
-        }],
-        "timezone": "Asia/Tokyo",
-        "last_check_time": 0
-      }
-    },
-
-    "UnsafeZone": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["person"],
-        "relay": 1,
-        "switch_relay": [1,2],
-        "frame_accuracy": 2,
-        "timezone": "Asia/Tokyo",
-        "last_check_time": 0
-      }
-    },
-
-    "PPE": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": {
-          "head": "No Helmet",
-          "no-vest": "No Vest"
-        },
-        "switch_relay": [1,2],
-        "frame_accuracy": 5,
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "relay": 0
-      }
-    },
-
-    "CameraTampering": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "frame_accuracy": 2,
-        "alert_interval": 30,
-        "motion_thres": 0.65,
-        "brightness_thres": 60,
-        "relay": 1,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0
-      }
-    },
-
-    "UnauthorisedArea": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["person"],
-        "time_limit": 5,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-
-        "yoloe": 1,
-        "yoloe_interval": 20,
-        "yoloe_confidence": 0.1,
-        "condition_label": ["scaffolding"]
-      }
-    },
-
-    "WAH": {
-      "zones": { 
-        "zone1": [[0,0],[1080,0],[1080,720],[0,720]] 
-      },
-      "parameters": {
-        "subcategory_mapping": {
-          "harness": "Harness", 
-          "hook": "Hook"
-        },
-        "missing_subcategory": "No Harness or Hook",
-        "frame_accuracy": 5,
-        "no_zone": 1,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-
-        "yoloe": 1,
-        "yoloe_interval": 10,
-        "yoloe_confidence": 0.1,
-        "condition_label": ["scaffolding", "ladder"]
-      }
-    },
-
-    "PeopleGathering": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "max_people": 5,
-        "frame_accuracy": 5,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["09:00","13:00"],["14:00","18:00"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday"]
-        }]
-      }
-    },
-
-    "StrayParking": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["car","truck","bus","motorcycle"],
-        "frame_accuracy": 10,
-        "relay": 1,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "UnauthorisedVehicleArea": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["car","truck","bus","motorcycle"],
-        "relay": 1,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "Tailgating": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "max_frames": 10,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "VehicleCongestion": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["car","truck","bus","motorcycle"],
-        "min_cluster_size": 5,
-        "duration": 15,
-        "min_iou": 0.2,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "WrongLane": {
-      "zones": {
-        "lane1": [[100,100],[600,100],[600,600],[100,600]],
-        "lane2": [[630,194],[718,200],[1277,614],[1276,713],[645,707]]
-      },
-      "parameters": {
-        "subcategory_mapping": ["car","truck","bus","motorcycle"],
-        "tolerance": 80,
-        "required_frames": 200,
-        "history_length": 20,
-        "min_movement": 10,
-        "lane_config": {
-          "lane1": {"expected_angle": 90},
-          "lane2": {"expected_angle": 270}
-        },
-        "relay": 0,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "MinMaxWorkerCount": {
-      "zones": {
-        "zone1": [[100,100],[600,100],[600,600],[100,600]],
-        "zone2": [[100,100],[600,100],[600,600],[100,600]]
-      },
-      "parameters": {
-        "min_workers": 2,
-        "max_workers": 6,
-        "min_iou": 0.2,
-        "required_frames": 10,
-        "relay": 0,
-        "switch_relay": [1,2],
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-
-    "HarnessViolation": {
-      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },
-      "parameters": {
-        "subcategory_mapping": ["person"],
-        "relay": 0,
-        "switch_relay": [1,2],
-        "frame_accuracy": 2,
-        "timezone": "Asia/Kolkata",
-        "last_check_time": 0,
-        "scheduled_time": [{
-          "time_start_end": [["00:00","23:59"]],
-          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        }]
-      }
-    },
-    
-    "UnauthorisedActivity": {
-     "zones": {
-       "machine_area": [[1287, 576], [1122, 1015], [1432, 1035], [1548, 598]]
-     },
-     "parameters": {
-       "dwell_time_sec": 2,
-       "relay": 1,
-       "switch_relay": [1,2],
-       "timezone": "Asia/Kolkata",
-       "last_check_time": 0,
-       "scheduled_time": [
-         {
-           "time_start_end": [["00:00","23:59"]],
-           "days": [
-             "Monday","Tuesday","Wednesday", "Thursday","Friday","Saturday","Sunday"
-           ]
-         }
-       ]
-     }
-   }
-  },
-
-  "save_settings": {
-    "save_snapshots": 0,
-    "save_rtsp_images": 0,
-    "take_cgi_snapshots": 0,
-    "take_video": 1
-  },
-
-  "calibration_required": 1
-}
+{  "sensor_id": "DEEPAK 26TOPS TESTING",  "default_arguments": {    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8/yolov8m.hef",    "pose_hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8/yolov8m_pose.hef",    "labels-json": "None"  },  "dashboard_connectivity": { "api": 1, "kafka": 1 },  "available_activities": [    "TrafficOverspeedingDistancewise",    "TimeBasedUnauthorizedAccess",    "UnsafeZone",    "PPE",    "UnauthorisedArea",    "HarnessViolation",    "PeopleGathering"	  ],  "active_activities": ["UnauthorisedArea"],  "radar_config": {    "port": "/dev/ttyACMr",    "baudrate": 9600,    "max_age": 10,    "max_diff_rais": 10  },  "camera_details": {    "RTSP_URL": "/home/arresto/hailo_ai_acts/resources/videos/unauthorisedarea.mp4",    "camera_ip": "172.16.16.151",    "username": "admin",    "password": "Arresto%402024",    "IF_USB_CAMERA": "False",    "USB_CAM_INPUT": ""  },  "activities_data": {    "traffic_overspeeding_distancewise": {      "zones": {        "zone1": [[28,942],[2643,1037],[2620,1177],[39,1054]]      },      "parameters": {        "real_distance": 10,        "speed_limit": { "car": 30, "truck": 30, "motorcycle": 30 },        "calibration": 1.3668,        "radar_calibration": 1,        "lines": { "lane1": [[1304,925],[1232,1110]] }      }    },    "TimeBasedUnauthorizedAccess": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["person"],        "frame_accuracy": 2,        "relay": 1,        "switch_relay": [1,2],        "scheduled_time": [{          "time_start_end": [["03:00","17:00"],["18:00","18:30"]],          "days": ["Monday","Wednesday","Friday"]        }],        "timezone": "Asia/Tokyo",        "last_check_time": 0      }    },    "UnsafeZone": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["person"],        "relay": 1,        "switch_relay": [1,2],        "frame_accuracy": 2,        "timezone": "Asia/Tokyo",        "last_check_time": 0      }    },    "PPE": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": {          "head": "No Helmet",          "no-vest": "No Vest"        },        "switch_relay": [1,2],        "frame_accuracy": 5,        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "relay": 0      }    },    "CameraTampering": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "frame_accuracy": 2,        "alert_interval": 30,        "motion_thres": 0.65,        "brightness_thres": 60,        "relay": 1,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0      }    },    "UnauthorisedArea": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["person"],        "time_limit": 5,        "relay": 0,        "switch_relay": [1,2],        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }],        "timezone": "Asia/Kolkata",        "last_check_time": 0      }    },    "PeopleGathering": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "max_people": 1,        "frame_accuracy": 10,        "relay": 0,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday"]        }]      }    },    "StrayParking": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["car","truck","bus","motorcycle"],        "frame_accuracy": 10,        "relay": 1,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "UnauthorisedVehicleArea": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["car","truck","bus","motorcycle"],        "relay": 1,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "Tailgating": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "max_frames": 10,        "relay": 0,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "VehicleCongestion": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["car","truck","bus","motorcycle"],        "min_cluster_size": 5,        "duration": 15,        "min_iou": 0.2,        "relay": 0,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "WrongLane": {      "zones": {        "lane1": [[100,100],[600,100],[600,600],[100,600]],        "lane2": [[630,194],[718,200],[1277,614],[1276,713],[645,707]]      },      "parameters": {        "subcategory_mapping": ["car","truck","bus","motorcycle"],        "tolerance": 80,        "required_frames": 200,        "history_length": 20,        "min_movement": 10,        "lane_config": {          "lane1": {"expected_angle": 90},          "lane2": {"expected_angle": 270}        },        "relay": 0,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "MinMaxWorkerCount": {      "zones": {        "zone1": [[100,100],[600,100],[600,600],[100,600]],        "zone2": [[100,100],[600,100],[600,600],[100,600]]      },      "parameters": {        "min_workers": 2,        "max_workers": 6,        "min_iou": 0.2,        "required_frames": 10,        "relay": 0,        "switch_relay": [1,2],        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    },    "HarnessViolation": {      "zones": { "zone1": [[0,0],[1080,0],[1080,720],[0,720]] },      "parameters": {        "subcategory_mapping": ["person"],        "relay": 0,        "switch_relay": [1,2],        "frame_accuracy": 2,        "timezone": "Asia/Kolkata",        "last_check_time": 0,        "scheduled_time": [{          "time_start_end": [["00:00","23:59"]],          "days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]        }]      }    }  },  "save_settings": {    "save_snapshots": 0,    "save_rtsp_images": 0,    "take_cgi_snapshots": 0,    "take_video": 1  },  "calibration_required": 1}

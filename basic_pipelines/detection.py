@@ -347,7 +347,7 @@ class user_app_callback_class(app_callback_class):
             if interval <= 0:
                 continue
 
-            confidence = float(params.get("yoloe_confidence", 0.0) or 0.1)
+            confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
 
             self.yoloe_activities[activity_name] = {
                 "condition_labels": condition_labels,
@@ -540,8 +540,7 @@ def app_callback(pad, info, user_data,frame_type):
 
     # Get the caps from the pad
     format, width, height = get_caps_from_pad(pad)
-    
-    # print(f"DEBUG: Frame received: {frame_type}")
+    # print("frame type: ",frame_type)
     
     # ============================================
     # CASE 1: ORIGINAL FRAME CAPTURE
@@ -636,6 +635,10 @@ def app_callback(pad, info, user_data,frame_type):
                 user_data.time_stamp.append(ts)
 
                 frame = get_numpy_from_buffer(buffer, format, width, height)
+                if hasattr(user_data, 'pose_keypoints') and user_data.pose_keypoints:
+                    # Draw the lines directly onto the frame
+                    frame = draw_skeleton_on_frame(frame, user_data.pose_keypoints)
+                    
                 user_data.model_image = frame
                 if user_data.recorder is not None:
                     user_data.recorder.add_frame(frame)
@@ -708,6 +711,64 @@ def app_callback(pad, info, user_data,frame_type):
 
     return Gst.PadProbeReturn.OK
 
+def draw_skeleton_on_frame(image, pose_keypoints, confidence_threshold=0.4):
+    """
+    Draws skeleton using the specific keys from get_keypoints()
+    """
+    if image is None or not pose_keypoints:
+        return image
+
+    # Define connections (bone lines) based on your get_keypoints() keys
+    CONNECTIONS = [
+        ('nose', 'left_eye'), ('nose', 'right_eye'),
+        ('left_eye', 'left_ear'), ('right_eye', 'right_ear'),
+        ('left_shoulder', 'right_shoulder'),
+        ('left_shoulder', 'left_elbow'), ('left_elbow', 'left_wrist'),
+        ('right_shoulder', 'right_elbow'), ('right_elbow', 'right_wrist'),
+        ('left_shoulder', 'left_hip'), ('right_shoulder', 'right_hip'),
+        ('left_hip', 'right_hip'),
+        ('left_hip', 'left_knee'), ('left_knee', 'left_ankle'),
+        ('right_hip', 'right_knee'), ('right_knee', 'right_ankle')
+    ]
+
+    # Get the mapping from your existing function
+    keypoint_map = get_keypoints()
+    
+    # Colors (BGR)
+    COLOR_POINT = (0, 255, 255) # Yellow
+    COLOR_LINE = (0, 255, 0)    # Green
+
+    for person in pose_keypoints:
+        # person is a list of (x, y, conf)
+        
+        # 1. Draw Lines (Bones)
+        for start_name, end_name in CONNECTIONS:
+            idx_start = keypoint_map.get(start_name)
+            idx_end = keypoint_map.get(end_name)
+            
+            # Ensure indices exist in the detection
+            if idx_start is not None and idx_end is not None and \
+               idx_start < len(person) and idx_end < len(person):
+                
+                x1, y1, c1 = person[idx_start]
+                x2, y2, c2 = person[idx_end]
+                
+                if c1 > confidence_threshold and c2 > confidence_threshold:
+                    try:
+                        cv2.line(image, (int(x1), int(y1)), (int(x2), int(y2)), COLOR_LINE, 2)
+                    except Exception:
+                        pass
+
+        # 2. Draw Points (Joints)
+        for i, (x, y, conf) in enumerate(person):
+            if conf > confidence_threshold:
+                try:
+                    cv2.circle(image, (int(x), int(y)), 4, COLOR_POINT, -1)
+                except Exception:
+                    pass
+
+    return image
+    
 def get_keypoints():
     return {
         'nose': 0,
@@ -748,14 +809,15 @@ def cleanup_resources():
     except Exception as e:
         print(f"❌ Error during cleanup: {e}")
 
-def load_activity_class(activity_name):
-    """Load activity class dynamically from basic_pipelines/activities/"""
-    try:
-        module = importlib.import_module(f"basic_pipelines.activities.{activity_name}")
-        return getattr(module, activity_name)  # Class name must match filename
-    except Exception as e:
-        print(f"❌ Failed to load {activity_name}: {e}")
-        return None
+# ~ def load_activity_class(activity_name):
+    # ~ """Load activity class dynamically from basic_pipelines/activities/"""
+    # ~ try:
+        # ~ module = importlib.import_module(f"basic_pipelines.activities.{activity_name}")
+        # ~ return getattr(module, activity_name)  # Class name must match filename
+    # ~ except Exception as e:
+        # ~ print(f"❌ Failed to load {activity_name}: {e}")
+        # ~ return None
+        
     
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent.parent
@@ -883,7 +945,7 @@ if __name__ == "__main__":
         else:
             user_data.labels_json = None
             print(f"⚠️  Labels file not found or invalid: {labels_json}")
-        
+            
         # Check if pose_hef path exists and is not None/empty
         if pose_hef_path and pose_hef_path != "None" and os.path.exists(pose_hef_path):
             user_data.pose_hef_path = pose_hef_path
@@ -895,9 +957,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Error setting up file paths: {e}")
         user_data.hef_path = None
-        user_data.pose_hef_path = None
         user_data.labels_json = None
-        
+    
 
     # Get save settings from config
     save_settings = config.get("save_settings", {})
@@ -906,6 +967,22 @@ if __name__ == "__main__":
     user_data.take_video=bool(save_settings.get("take_video", 0))
     print(f"Save settings loaded from config: snapshots={user_data.save_snapshots}, rtsp_images={user_data.save_rtsp_images}")
    
+    # ==========================================================
+    # Initialize centralized YOLOE control
+    # ==========================================================
+    try:
+        user_data.yoloe_handler = YOLOEHandler(config)
+        # Link the results queue if you want YOLOE results sent to Kafka
+        # user_data.yoloe_handler.set_results_queue(results_events_queue) 
+        
+        user_data._init_yoloe_from_config(config)
+        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
+            user_data.yoloe_running = True
+            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
+            user_data.yoloe_thread.start()
+            print(f"✅ YOLOE centralized scheduler started with activities: {list(user_data.yoloe_activities.keys())}")
+    except Exception as e:
+        print(f"❌ Failed to initialize YOLOE centralized control: {e}")
         
     # Snapshot if configured
     if "camera_details" in config:
@@ -957,145 +1034,96 @@ if __name__ == "__main__":
     user_data.results_analytics_queue = results_analytics_queue
     user_data.results_events_queue = results_events_queue
     
-    # Initialize YOLOE Handler & Centralized Scheduler
-    try:
-        print("🚀 Initializing YOLOE Handler...")
-        user_data.yoloe_handler = YOLOEHandler(config)
-        results_yoloe_queue = queue.Queue(maxsize=500) # yoloe queue
-        user_data.yoloe_handler.set_results_queue(results_yoloe_queue)
-        user_data.results_yoloe_queue = results_yoloe_queue
-        
-        user_data._init_yoloe_from_config(config)
-        
-        # --- TEMPORARY DEBUG ---
-        for act_name, details in config.get("activities_data", {}).items():
-            params = details.get("parameters", {})
-            print(f"DEBUG YOLOE check [{act_name}]:")
-            print(f"  yoloe flag     : {params.get('yoloe', 0)}")
-            print(f"  condition_label: {params.get('condition_label', 'MISSING')}")
-            print(f"  yoloe_interval : {params.get('yoloe_interval', 'MISSING')}")
-        print(f"DEBUG: yoloe_activities populated = {bool(user_data.yoloe_activities)}")
-        print(f"DEBUG: yoloe_condition_labels     = {user_data.yoloe_condition_labels}")
-        # --- END DEBUG ---
-
-        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
-            user_data.yoloe_running = True
-            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
-            user_data.yoloe_thread.start()
-            print(f"✅ YOLOE centralized scheduler started for: {list(user_data.yoloe_activities.keys())}")
-    except Exception as e:
-        print(f"⚠️ Failed to init YOLOE Handler: {e}")
-    
     # Extract zones data for each activity in activities_data
-    zones_data = {}
-    parameters_data={}
-    violation_id_data={}
+    # ~ zones_data = {}
+    # ~ parameters_data={}
+    # ~ violation_id_data={}
 
-    active_instances=[]
-    active_methods=[]
-    for activity, details in config["activities_data"].items():
-        if activity not in available_activities:
-            print(f"Activity '{activity}' is not supported.")
-            continue
-
-        if activity not in active_activities:
-            print(f"Activity '{activity}' is disabled in config.")
-            continue
-            
-        zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
-        parameters_data[activity] =details["parameters"]
+    # ~ active_instances=[]
+    # ~ active_methods=[]
+    # ~ for activity, details in config["activities_data"].items():
+        # ~ if activity in available_activities:
+            # ~ if activity in active_activities:
+                # ~ zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
+                # ~ parameters_data[activity] =details["parameters"]
                 
-        ActivityClass = load_activity_class(activity)
-        if not ActivityClass:
-            print(f"Failed to load activity class: {activity}")
-            continue
+                # ~ ActivityClass = load_activity_class(activity)
+                # ~ if not ActivityClass:
+                    # ~ print(f"Failed to load activity class: {activity}")
+                    # ~ continue
 
-        # Pass user_data as parent
-        # activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
-        try:
-            activity_instance = ActivityClass(
-                user_data,
-                zone_data,
-                parameters_data[activity]
-            )
-        except Exception as e:
-            print(f"Failed to initialize activity '{activity}': {e}")
-            continue
-            
-        active_instances.append(activity_instance)
+                # ~ # Pass user_data as parent
+                # ~ activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
+                # ~ active_instances.append(activity_instance)
 
-        # Register available methods from the activity instance
-        # if isinstance(activity_instance, object):
-        # Register run() if available
-        run_method = getattr(activity_instance, "run", None)
-        if callable(run_method):
-            active_methods.append(run_method)
+                # ~ # Register available methods from the activity instance
+                # ~ if isinstance(activity_instance, object):
+                    # ~ # Register run() if available
+                    # ~ run_method = getattr(activity_instance, "run", None)
+                    # ~ if callable(run_method):
+                        # ~ active_methods.append(run_method)
 
-        # Register cleaning() if available
-        cleaning_method = getattr(activity_instance, "cleaning", None)
-        if callable(cleaning_method):
-            user_data.active_activities_for_cleaning[activity] = cleaning_method
+                    # ~ # Register cleaning() if available
+                    # ~ cleaning_method = getattr(activity_instance, "cleaning", None)
+                    # ~ if callable(cleaning_method):
+                        # ~ user_data.active_activities_for_cleaning[activity] = cleaning_method
+            # ~ else:
+                # ~ print("This Activity is not active right now")
+        # ~ else:
+            # ~ print("This Activity is not available right now.")
 
+    # ~ #Assigning Zones Data to Activity Instance
+    # ~ user_data.zone_data=zones_data
+    # ~ user_data.parameters_data = parameters_data
+    # ~ user_data.violation_id_data = violation_id_data
+    # ~ for activity in active_activities:
+        # ~ if activity=="traffic_overspeeding_distancewise":
+            # ~ # Retrieve the method from the Activities instance if it exists
+            # ~ activity_func = getattr(user_data, activity, None)
+            # ~ if callable(activity_func):
+                # ~ active_methods.append(activity_func)
+            # ~ else:
+                # ~ # Activity not recognized - silently continue
+                # ~ pass
 
-    #Assigning Zones Data to Activity Instance
-    user_data.zone_data=zones_data
-    user_data.parameters_data = parameters_data
-    user_data.violation_id_data = violation_id_data
-    for activity in active_activities:
-        if activity=="traffic_overspeeding_distancewise":
-            # Retrieve the method from the Activities instance if it exists
-            activity_func = getattr(user_data, activity, None)
-            if callable(activity_func):
-                active_methods.append(activity_func)
-            else:
-                # Activity not recognized - silently continue
-                pass
+    # ~ user_data.active_methods=active_methods
+    
+    # ==========================================================
+    # INITIALIZE ANALYTICS ENGINE
+    # ==========================================================
+    active_methods = []
+    user_data.active_activities_for_cleaning = {}
 
-    user_data.active_methods=active_methods
+    try:
+        # Import your new unified engine (Adjust path if it is inside basic_pipelines)
+        from activities import AnalyticsEngine 
+        
+        print("🚀 Initializing Unified Analytics Engine...")
+        user_data.analytics_engine = AnalyticsEngine(user_data, config)
+        
+        # Hook the engine's master 'run' and 'clean' methods into the pipeline
+        active_methods.append(user_data.analytics_engine.run_all)
+        user_data.active_activities_for_cleaning["all_analytics"] = user_data.analytics_engine.clean_all
+        
+        print(f"✅ Active Analytics Modules mapped successfully.")
+    except Exception as e:
+        print(f"❌ Failed to initialize Analytics Engine: {e}")
+
+    # ~ # ==========================================================
+    # ~ # HANDLE NATIVE METHODS (Traffic Overspeeding)
+    # ~ # ==========================================================
+    # ~ # Traffic overspeeding lives directly inside user_app_callback_class, not the engine
+    # ~ for activity in active_activities:
+        # ~ if activity == "traffic_overspeeding_distancewise":
+            # ~ activity_func = getattr(user_data, activity, None)
+            # ~ if callable(activity_func):
+                # ~ active_methods.append(activity_func)
+                # ~ print("✅ Registered native traffic_overspeeding_distancewise method.")
+
+    # Assign the final list of methods to run every frame
+    user_data.active_methods = active_methods
     
     app = GStreamerDetectionApp(app_callback, user_data)
-
-    # ========================================
-    # ATTACH POSE PROBE IF POSE IS ENABLED
-    # ========================================
-    if user_data.pose_hef_path is not None:
-        try:
-            pipeline = app.pipeline
-            
-            
-            #############################################################################
-            # Shift this pose callback identity element in gstreamer app later 
-            # The name comes from your INFERENCE_PIPELINE: f'identity name={name}_pose_estimation_callback'
-            # If you used name='inference' (default), it will be 'pose_estimation_callback'
-            pose_identity = pipeline.get_by_name("pose_estimation_callback")
-            
-            if pose_identity is None: # no use of this line
-                # Try alternate name if using custom name
-                pose_identity = pipeline.get_by_name("hailo_pose_estimation_callback")
-            
-            if pose_identity:
-                print("✅ Found pose callback identity element")
-                
-                pose_pad = pose_identity.get_static_pad("sink")
-                
-                if pose_pad:
-                    pose_pad.add_probe(
-                        Gst.PadProbeType.BUFFER, # make it non blocking
-                        app_callback,
-                        user_data,
-                        "pose_estimated"
-                    )
-                    print("✅ Pose estimation probe attached successfully")
-                else:
-                    print("⚠️ Could not get sink pad from pose identity element")
-            else:
-                print("⚠️ Pose identity element not found in pipeline")
-                print("💡 Pose pipeline may not have been created")
-                
-        except Exception as e:
-            print(f"⚠️ Error attaching pose probe: {e}")
-            import traceback
-            traceback.print_exc()
     
     try:
         print("🚀 Starting SVDS detection system...")
