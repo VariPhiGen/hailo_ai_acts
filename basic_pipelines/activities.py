@@ -2,14 +2,18 @@ import time
 from datetime import datetime
 import pytz
 from shapely.geometry import Polygon
+import numpy as np
+from collections import deque
 
 from activity_helper_utils import (
     is_bottom_in_zone,
+    is_object_in_zone,
     xywh_original_percentage,
     activity_active_time,
     init_relay,
     trigger_relay,
-    relay_auto_off
+    relay_auto_off,
+    calculate_iou 
 )
 
 
@@ -107,11 +111,40 @@ class AnalyticsEngine:
                 self.violation_id_data["UnauthorisedVehicleArea"] = []
                 self.active_methods.append(self.unauthorised_vehicle_area)
                 
+            elif activity == "VehicleCongestion":
+                self.running_data["VehicleCongestion"] = {
+                    zone: {"start_time": None, "triggered": False}
+                    for zone in self.zone_data["VehicleCongestion"].keys()
+                }
+                self.active_methods.append(self.vehicle_congestion)
+                
+            elif activity == "MinMaxWorkerCount":
+                self.running_data["MinMaxWorkerCount"] = {
+                    zone: {
+                        "active": False,
+                        "violation_type": None,
+                        "start_time": None,
+                        "start_frame": None,
+                        "logged": False
+                    }
+                    for zone in self.zone_data["MinMaxWorkerCount"].keys()
+                }
+                self.active_methods.append(self.min_max_worker_count)
+                
+            elif activity == "WrongLane":
+                self.running_data["WrongLane"] = {
+                    zone: {} for zone in self.zone_data["WrongLane"].keys()
+                }
+                self.violation_id_data["WrongLane"] = []
+                self.active_methods.append(self.wrong_lane)
+                
             elif activity == "unattended_bag_detection":
                 self.running_data["unattended_bag_detection"] = {}   # zone_name -> {tracker_id -> {last_attended}}
                 self.violation_id_data["unattended_bag_detection"] = []
                 self.active_methods.append(self.unattended_bag_detection)
-                print(f"✅ unattended_bag_detection registered successfully.")
+
+
+# ---------------------- Activities fucntions ---------------------------------------
     # ─────────────────────────────────────────────────────────────────────────
     # UnauthorizedArea
     # ─────────────────────────────────────────────────────────────────────────
@@ -497,6 +530,7 @@ class AnalyticsEngine:
                             and tracker_id not in self.violation_id_data["StrayParking"]
                         ):
                             self.violation_id_data["StrayParking"].append(tracker_id)
+                            print("Car is parked in no parking area: ", tracker_id)
 
                             if params["relay"] == 1:
                                 trigger_relay(relay, switch_relay)
@@ -556,6 +590,261 @@ class AnalyticsEngine:
                             {"zone_name": zone_name}, datetimestamp, 1, self.parent.image
                         )
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # vehicle_congestion
+    # ───────────────────────────────────────────────────────────────────────── 
+    def vehicle_congestion(self):
+        params       = self.parameters_data["VehicleCongestion"]
+        tz           = self.timezones["VehicleCongestion"]
+        relay        = self.relays["VehicleCongestion"]
+        switch_relay = self.switch_relays["VehicleCongestion"]
+
+        if not activity_active_time(params, tz):
+            return
+
+        if time.time() - params["last_check_time"] <= 1:
+            return
+        params["last_check_time"] = time.time()
+
+        current_time = time.time()
+
+        vehicle_indices = [
+            i for i, cls in enumerate(self.parent.classes)
+            if cls in params["subcategory_mapping"]
+        ]
+
+        for zone_name, zone_polygon in self.zone_data["VehicleCongestion"].items():
+            zone_state = self.running_data["VehicleCongestion"][zone_name]
+
+            # use shapely .bounds since zones are stored as Polygon objects
+            minx, miny, maxx, maxy = zone_polygon.bounds
+            zone_bbox = [minx, miny, maxx, maxy]
+
+            vehicle_count = 0
+            for idx in vehicle_indices:
+                if calculate_iou(self.parent.detection_boxes[idx], zone_bbox) >= params["min_iou"]:
+                    vehicle_count += 1
+
+            if vehicle_count >= params["min_cluster_size"]:
+                if zone_state["start_time"] is None:
+                    zone_state["start_time"] = current_time
+
+                duration = current_time - zone_state["start_time"]
+
+                if duration >= params["duration"] and not zone_state["triggered"]:
+                    zone_state["triggered"] = True
+
+                    if params["relay"] == 1:
+                        trigger_relay(relay, switch_relay)
+
+                    datetimestamp = datetime.now(tz).isoformat()
+
+                    self.parent.create_result_events(
+                        None, "vehicle", "Vehicle_Congestion",
+                        {"zone_name": zone_name, "vehicle_count": vehicle_count},
+                        datetimestamp, 1, self.parent.image
+                    )
+            else:
+                # congestion cleared — reset
+                zone_state["start_time"] = None
+                zone_state["triggered"]  = False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # min_max_worker_count
+    # ─────────────────────────────────────────────────────────────────────────                 
+    def min_max_worker_count(self):
+        params       = self.parameters_data["MinMaxWorkerCount"]
+        tz           = self.timezones["MinMaxWorkerCount"]
+        relay        = self.relays["MinMaxWorkerCount"]
+        switch_relay = self.switch_relays["MinMaxWorkerCount"]
+
+        if not activity_active_time(params, tz):
+            return
+
+        if time.time() - params["last_check_time"] <= 1:
+            return
+        params["last_check_time"] = time.time()
+
+        min_workers     = params["min_workers"]
+        max_workers     = params["max_workers"]
+        min_iou         = params["min_iou"]
+        required_frames = params["required_frames"]
+
+        for zone_name, zone_polygon in self.zone_data["MinMaxWorkerCount"].items():
+            zone_state = self.running_data["MinMaxWorkerCount"][zone_name]
+
+            # use shapely .bounds since zones are stored as Polygon objects
+            minx, miny, maxx, maxy = zone_polygon.bounds
+            zone_bbox = [minx, miny, maxx, maxy]
+
+            # count persons in zone via IoU
+            worker_count = 0
+            for i, cls in enumerate(self.parent.classes):
+                if cls != "person":
+                    continue
+                if calculate_iou(self.parent.detection_boxes[i], zone_bbox) >= min_iou:
+                    worker_count += 1
+
+            # determine violation type
+            violation_type = None
+            if worker_count < min_workers:
+                violation_type = "understaffed"
+            elif worker_count > max_workers:
+                violation_type = "overcrowded"
+
+            # no violation — reset all state
+            if violation_type is None:
+                zone_state["active"]         = False
+                zone_state["violation_type"] = None
+                zone_state["start_time"]     = None
+                zone_state["start_frame"]    = None
+                zone_state["logged"]         = False
+                continue
+
+            # violation just started
+            if not zone_state["active"]:
+                zone_state["active"]         = True
+                zone_state["violation_type"] = violation_type
+                zone_state["start_time"]     = time.time()
+                zone_state["start_frame"]    = self.parent.frame_monitor_count
+                zone_state["logged"]         = False
+                continue
+
+            # violation continues — check frame threshold
+            elapsed_frames = self.parent.frame_monitor_count - zone_state["start_frame"]
+
+            if elapsed_frames >= required_frames and not zone_state["logged"]:
+                zone_state["logged"] = True
+
+                end_time  = time.time()
+                end_frame = self.parent.frame_monitor_count
+
+                if params["relay"] == 1:
+                    trigger_relay(relay, switch_relay)
+
+                datetimestamp = f"{datetime.now(tz).isoformat()}_{zone_name}"
+
+                print(f"[MIN/MAX WORKER] {violation_type.upper()} in zone {zone_name} (count={worker_count})")
+
+                self.parent.create_result_events(
+                    None, "person", "MinMax_Worker_Violation",
+                    {
+                        "zone_name":      zone_name,
+                        "violation_type": violation_type,
+                        "worker_count":   worker_count,
+                        "start_time":     zone_state["start_time"],
+                        "end_time":       end_time,
+                        "start_frame":    zone_state["start_frame"],
+                        "end_frame":      end_frame
+                    },
+                    datetimestamp, 1, self.parent.image
+                )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # wrong_lane
+    # ─────────────────────────────────────────────────────────────────────────                 
+    def wrong_lane(self):
+        params       = self.parameters_data["WrongLane"]
+        tz           = self.timezones["WrongLane"]
+        relay        = self.relays["WrongLane"]
+        switch_relay = self.switch_relays["WrongLane"]
+
+        if not activity_active_time(params, tz):
+            return
+
+        if time.time() - params["last_check_time"] <= 1:
+            return
+        params["last_check_time"] = time.time()
+
+        tolerance       = params["tolerance"]
+        required_frames = params["required_frames"]
+        lane_config     = params["lane_config"]
+        vehicle_classes = params["subcategory_mapping"]
+
+        for i, cls in enumerate(self.parent.classes):
+            if cls not in vehicle_classes:
+                continue
+
+            box        = self.parent.detection_boxes[i]
+            tracker_id = self.parent.tracker_ids[i]
+            confidence = self.parent.detection_score[i]
+
+            cx = (box[0] + box[2]) / 2
+            cy = (box[1] + box[3]) / 2
+            center = (cx, cy)
+
+            for zone_name, zone_polygon in self.zone_data["WrongLane"].items():
+                if not is_object_in_zone(box, zone_polygon):
+                    continue
+
+                zone_state = self.running_data["WrongLane"][zone_name]
+
+                if tracker_id not in zone_state:
+                    zone_state[tracker_id] = {
+                        "points":      deque(maxlen=params["history_length"]),
+                        "start_frame": None
+                    }
+
+                state = zone_state[tracker_id]
+                state["points"].append(center)
+
+                # need at least 2 points to compute direction
+                if len(state["points"]) < 2:
+                    continue
+
+                # compute total movement distance
+                total_distance = 0
+                for j in range(1, len(state["points"])):
+                    dx = state["points"][j][0] - state["points"][j - 1][0]
+                    dy = state["points"][j][1] - state["points"][j - 1][1]
+                    total_distance += (dx**2 + dy**2) ** 0.5
+
+                # ignore idle vehicles
+                if total_distance < params["min_movement"]:
+                    continue
+
+                # compute direction angle
+                p1 = state["points"][0]
+                p2 = state["points"][-1]
+                dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+                angle = np.degrees(np.arctan2(dy, dx)) % 360
+
+                expected_angle = lane_config[zone_name]["expected_angle"]
+                diff           = abs(angle - expected_angle)
+                angular_diff   = min(diff, 360 - diff)
+
+                wrong = angular_diff > tolerance
+
+                if wrong:
+                    if state["start_frame"] is None:
+                        state["start_frame"] = self.parent.frame_monitor_count
+                    else:
+                        elapsed = self.parent.frame_monitor_count - state["start_frame"]
+
+                        if (
+                            elapsed >= required_frames
+                            and tracker_id not in self.violation_id_data["WrongLane"]
+                        ):
+                            self.violation_id_data["WrongLane"].append(tracker_id)
+
+                            if params["relay"] == 1:
+                                trigger_relay(relay, switch_relay)
+
+                            xywh = xywh_original_percentage(
+                                box, self.parent.original_width, self.parent.original_height
+                            )
+                            datetimestamp = f"{datetime.now(tz).isoformat()}_{tracker_id}"
+
+                            print(f"[WRONG LANE] Vehicle {tracker_id} in zone {zone_name}")
+
+                            self.parent.create_result_events(
+                                xywh, cls, "Wrong_Lane",
+                                {"zone_name": zone_name},
+                                datetimestamp, confidence, self.parent.image
+                            )
+                else:
+                    # direction correct — reset frame counter
+                    state["start_frame"] = None
     
     # ─────────────────────────────────────────────────────────────────────────
     # unattended_bag_detection
@@ -730,6 +1019,24 @@ class AnalyticsEngine:
                 tid for tid in self.violation_id_data["UnauthorisedVehicleArea"]
                 if tid in active_trackers
             ]
+            
+        if "VehicleCongestion" in self.parameters_data:
+            pass
+            
+        if "MinMaxWorkerCount" in self.parameters_data:
+            pass
+            
+        if "WrongLane" in self.parameters_data:
+            self.violation_id_data["WrongLane"] = [
+                tid for tid in self.violation_id_data["WrongLane"]
+                if tid in active_trackers
+            ]
+            for zone_name in self.zone_data["WrongLane"].keys():
+                self.running_data["WrongLane"][zone_name] = {
+                    tid: data
+                    for tid, data in self.running_data["WrongLane"][zone_name].items()
+                    if tid in active_trackers
+                }
         
         if "unattended_bag_detection" in self.parameters_data:
             active_trackers = self.parent.last_n_frame_tracker_ids
