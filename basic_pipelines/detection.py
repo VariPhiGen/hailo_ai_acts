@@ -1001,7 +1001,7 @@ if __name__ == "__main__":
     
     
     # Initialize results queue
-    results_analytics_queue = queue.Queue(maxsize=1)
+    results_analytics_queue = queue.Queue(maxsize=100)
     results_events_queue = queue.Queue(maxsize=100)
 
     # Getting Kafka Configuration

@@ -89,6 +89,19 @@ def calculate_iou(self, boxA, boxB):
     
     return iou
 
+def merge_box(self,box1,box2):
+        # Compute the union of the two bounding boxes
+        xmin = min(box1[0], box2[0])
+        ymin = min(box1[1], box2[1])
+        xmax = max(box1[2], box2[2])
+        ymax = max(box1[3], box2[3])
+        union_box = [xmin, ymin, xmax, ymax]
+        return union_box
+    
+# bottom center
+def bottom_center(box):
+    return [int((box[0] + box[2]) / 2), int(box[3])]
+
 # relay
 def init_relay(parent, parameters):
     """
@@ -198,4 +211,73 @@ def activity_active_time(parameters, timezone):
 
     # No schedule matched
     return False
+    
+######################### helper fucntion for loitering #############
+def extract_median_color(image, bbox):
+    """Extract median RGB color from ROI defined by bbox in the frame."""
+    if image is None:
+        return None
+    x1, y1, x2, y2 = bbox
+    h, w = image.shape[:2]
+    x1, y1 = max(0, int(x1)), max(0, int(y1))
+    x2, y2 = min(w, int(x2)), min(h, int(y2))
+    roi = image[y1:y2, x1:x2]
+    if roi.size == 0:
+        return None
+    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    median_rgb = np.median(roi_rgb.reshape(-1, 3), axis=0)
+    return median_rgb
 
+
+def uniform_validation(rgb_value, category, hsv_target, hsv_tolerance):
+    """Check if the given RGB color matches the HSV target for a category."""
+    if rgb_value is None:
+        return False
+    bgr = np.uint8([[rgb_value[::-1]]])
+    h, s, v = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)[0][0]
+    target    = hsv_target.get(category, [0, 0, 0])
+    tolerance = hsv_tolerance.get(category, [0, 0, 0])
+    hue_diff  = min(abs(int(h) - target[0]), 180 - abs(int(h) - target[0]))
+    sat_diff  = abs(int(s) - target[1])
+    val_diff  = abs(int(v) - target[2])
+    return hue_diff <= tolerance[0] and sat_diff <= tolerance[1] and val_diff <= tolerance[2]
+    
+###################################################################
+
+############# for running detection ##################################
+def get_interpolated_ppm(calibration_data, y_coord):
+    below = [p for p in calibration_data if p["y"] <= y_coord]
+    above = [p for p in calibration_data if p["y"] > y_coord]
+    if not below:
+        return above[0]["ppm"]
+    if not above:
+        return below[-1]["ppm"]
+    p1 = below[-1]
+    p2 = above[0]
+    if p1["y"] == p2["y"]:
+        return p1["ppm"]
+    return p1["ppm"] + (p2["ppm"] - p1["ppm"]) * ((y_coord - p1["y"]) / (p2["y"] - p1["y"]))
+    
+    
+################## for light detection #################################
+def get_zone_grayscale(image, polygon):
+    """Extract masked grayscale of a zone polygon from image."""
+    if image is None:
+        return None
+    # polygon is already a Shapely Polygon object
+    mask   = np.zeros(image.shape[:2], dtype=np.uint8)
+    points = np.array(
+        [[(int(x), int(y)) for x, y in polygon.exterior.coords]],
+        dtype=np.int32
+    )
+    cv2.fillPoly(mask, points, 255)
+    gray      = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    zone_gray = cv2.bitwise_and(gray, gray, mask=mask)
+    return zone_gray
+
+
+def compute_histogram(zone_gray):
+    """Compute normalized histogram from a grayscale zone image."""
+    hist = cv2.calcHist([zone_gray], [0], None, [256], [0, 256])
+    hist = cv2.normalize(hist, hist).flatten()
+    return hist
