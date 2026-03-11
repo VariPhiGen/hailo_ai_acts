@@ -302,6 +302,17 @@ class AnalyticsEngine:
                 self.running_data["WorkforceEfficiency"]["time"] = time.time()
                 self.active_methods.append(self.workforce_efficiency)
                 
+            elif activity == "UnattendedArea":
+                self.running_data["UnattendedArea"] = {
+                    zone: {
+                        "last_security_guard_seen": time.time(),  # assume guard present at start
+                        "alert_sent":    False,
+                        "cooldown_until": 0.0
+                    }
+                    for zone in self.zone_data["UnattendedArea"].keys()
+                }
+                self.active_methods.append(self.unattended_area)
+                
                 
 # ---------------------- Activities fucntions ---------------------------------------
     # ─────────────────────────────────────────────────────────────────────────
@@ -2574,10 +2585,89 @@ class AnalyticsEngine:
                     result
                 )
 
-            # reset counters after sending — mirrors raw exactly
+            # reset counters after sending
             data["current_frame_count"] = 0
             data["timestamp"]           = datetime.now(tz).isoformat()
             data["time"]                = time.time()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # unattended_area
+    # ─────────────────────────────────────────────────────────────────────────
+    def unattended_area(self):
+        params       = self.parameters_data["UnattendedArea"]
+        tz           = self.timezones["UnattendedArea"]
+        relay        = self.relays["UnattendedArea"]
+        switch_relay = self.switch_relays["UnattendedArea"]
+
+        if not activity_active_time(params, tz):
+            return
+
+        # runs every frame, no 1-second gate
+        current_time         = time.time()
+        unattended_threshold = params.get("unattended_threshold_s", 300)
+
+        # get all security guard indices once
+        security_guard_indices = [
+            i for i, cls in enumerate(self.parent.classes)
+            if cls in ["security_guard", "security guard"]
+        ]
+
+        for zone_name, zone_polygon in self.zone_data["UnattendedArea"].items():
+            zone_state = self.running_data["UnattendedArea"][zone_name]
+
+            # check if any security guard is present in this zone
+            security_guard_found = False
+            for idx in security_guard_indices:
+                box = self.parent.detection_boxes[idx]
+                if is_object_in_zone(box, zone_polygon):
+                    security_guard_found = True
+                    zone_state["last_security_guard_seen"] = current_time
+                    # reset alert if guard returns
+                    if zone_state["alert_sent"]:
+                        zone_state["alert_sent"] = False
+                    break
+
+            if security_guard_found:
+                continue
+
+            # no guard found — check how long zone has been unattended
+            time_unattended = current_time - zone_state["last_security_guard_seen"]
+            cooldown_until  = zone_state.get("cooldown_until", 0.0)
+
+            if (
+                time_unattended >= unattended_threshold
+                and not zone_state["alert_sent"]
+            ):
+                # skip if still in cooldown
+                if current_time < cooldown_until:
+                    continue
+
+                # use zone bounds for xywh — mirrors raw zone_polygon.bounds usage
+                minx, miny, maxx, maxy = zone_polygon.bounds
+                zone_box = [minx, miny, maxx, maxy]
+                xywh     = xywh_original_percentage(zone_box, self.parent.original_width, self.parent.original_height)
+
+                datetimestamp = f"{datetime.now(tz).isoformat()}_unattended_{zone_name}"
+
+                print(f"[UNATTENDED AREA] No security guard in '{zone_name}' for {time_unattended:.1f}s")
+
+                zone_state["alert_sent"] = True
+
+                if params["relay"] == 1:
+                    trigger_relay(relay, switch_relay)
+
+                self.parent.create_result_events(
+                    xywh, "zone", "Emergency Control-Unattended Area",
+                    {
+                        "zone_name":           zone_name,
+                        "unattended_duration": round(time_unattended, 1),
+                        "threshold":           unattended_threshold
+                    },
+                    datetimestamp, 0.9, self.parent.image
+                )
+
+                # set 1-hour cooldown after alert
+                zone_state["cooldown_until"] = current_time + 3600.0
                                 
     # ─────────────────────────────────────────────────────────────────────────
     # EXECUTION
@@ -2841,4 +2931,7 @@ class AnalyticsEngine:
                     ]
                     
         if "WorkforceEfficiency" in self.parameters_data:
+            pass
+            
+        if "UnattendedArea" in self.parameters_data:
             pass
