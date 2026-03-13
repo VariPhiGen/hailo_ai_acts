@@ -32,9 +32,9 @@ cat > "$TARGET" <<EOF
   "dashboard_connectivity":{
     "api":1,
     "kafka":1,
-    "api_confidence_threshold": 0.85,
+    "api_confidence_threshold": 0.88,
     "kafka_confidence_min": 0.7,
-    "kafka_confidence_max": 0.85
+    "kafka_confidence_max": 0.88
   },
   "available_activities": [
     "traffic_overspeeding_distancewise",
