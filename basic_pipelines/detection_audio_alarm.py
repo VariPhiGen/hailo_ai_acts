@@ -814,7 +814,7 @@ if __name__ == "__main__":
                     continue
 
                 # Pass user_data as parent
-                activity_instance = ActivityClass(user_data,zone_data,parameters_data)
+                activity_instance = ActivityClass(user_data,zone_data,parameters_data[activity])
                 active_instances.append(activity_instance)
 
                 # Register available methods from the activity instance
