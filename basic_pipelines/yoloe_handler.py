@@ -7,10 +7,16 @@ import numpy as np
 import requests
 
 
-# Base URL for the YOLOE/YOLOv26 segmentation API.
-# By default, expects the FastAPI service from `app.py` to be running on localhost:8000.
-# You can override this with the `YOLOE_API_URL` environment variable.
-YOLOE_API_URL: str = os.getenv("YOLOE_API_URL", "http://127.0.0.1:8000/predict")
+# URL for the external YOLOE inference service.
+# Override with the YOLOE_API_URL environment variable.
+YOLOE_API_URL: str = os.getenv(
+    "YOLOE_API_URL",
+    "http://yoloe.vgiskill.com/predict_prompt",
+)
+
+# Minimum confidence threshold sent to the server.
+# The server accepts a float 0–1; the API default is 0.1.
+YOLOE_CONF: float = float(os.getenv("YOLOE_CONF", "0.1"))
 
 
 def _encode_image_to_jpeg(image: np.ndarray, quality: int = 90) -> bytes:
@@ -49,38 +55,67 @@ def text_prompt(
     *,
     timeout: float = 15.0,
     api_url: Optional[str] = None,
+    conf: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    Call the YOLOE/YOLOv26 segmentation API with a NumPy image and a list of prompts.
+    Call the YOLOE inference service with a NumPy image and a list of class prompts.
+
+    API contract (POST http://yoloe.vgiskill.com/predict_prompt):
+        Request  – multipart/form-data:
+            file    : JPEG image bytes  (field name: "file")
+            prompts : comma-separated class names  (e.g. "scaffolding, safety_harness")
+            conf    : float confidence threshold (optional, default 0.1)
+
+        Response JSON:
+            {
+              "inference_timestamp": str,
+              "inference_start":     str,
+              "detections": [
+                {
+                  "prompt":       str,
+                  "confidence":   float,
+                  "bounding_box": [x1, y1, x2, y2],  # absolute pixel coords
+                  "polygon":      [[x, y], ...]
+                },
+                ...
+              ]
+            }
 
     Args:
-        image: Input image as NumPy array (H x W x 3, BGR or RGB).
-        prompt: List of class names / text prompts.
+        image:   Input image as NumPy array (H x W x 3, BGR or RGB).
+                 MUST be in original (full-resolution) pixel space so that the
+                 returned coordinates align with Hailo detection_boxes.
+        prompt:  List of class names to detect (e.g. ["scaffolding", "harness"]).
         timeout: HTTP request timeout in seconds.
-        api_url: Optional override for the API URL. Defaults to `YOLOE_API_URL`.
+        api_url: Optional override for the API URL. Defaults to YOLOE_API_URL env var.
+        conf:    Optional confidence threshold override. Defaults to YOLOE_CONF env var.
 
     Returns:
-        JSON-like dict with the following keys, each containing a list:
-            - "prompt":       list of detected class names (str)
-            - "bounding_box": list of bbox dicts: {"x1", "y1", "x2", "y2"}
-            - "polygon":      list of segmentation polygons (list[list[float]])
-            - "confidence":   list of confidences (float)
+        Dict with the following keys, each a list (one entry per detection):
+            "prompt"       – list[str]              detected class names
+            "bounding_box" – list[dict]             {"x1", "y1", "x2", "y2"}
+            "polygon"      – list[list[list[float]]]  [[x,y], ...]
+            "confidence"   – list[float]
     """
     if not prompt:
         raise ValueError("prompt list must not be empty")
 
     url = api_url or YOLOE_API_URL
+    threshold = conf if conf is not None else YOLOE_CONF
 
-    # Prepare multipart/form-data payload:
-    #   - image: JPEG-encoded bytes
-    #   - classes: JSON string of prompt list (matches FastAPI /predict contract)
+    # Encode image to JPEG bytes
     image_bytes = _encode_image_to_jpeg(image)
 
+    # Build multipart/form-data payload matching the new API contract:
+    #   file    → JPEG bytes
+    #   prompts → comma-separated string  (NOT JSON)
+    #   conf    → float as string
     files = {
-        "image": ("image.jpg", image_bytes, "image/jpeg"),
+        "file": ("image.jpg", image_bytes, "image/jpeg"),
     }
     data = {
-        "classes": json.dumps(prompt),
+        "prompts": ", ".join(prompt),
+        "conf": str(threshold),
     }
 
     try:
@@ -91,38 +126,38 @@ def text_prompt(
 
     payload = response.json()
 
-    # The segmentation API (see `app.py` /predict) returns:
-    # {
-    #   "success": bool,
-    #   "results": [
-    #       {
-    #           "class_name": str,
-    #           "confidence": float,
-    #           "bbox": {"x1": float, "y1": float, "x2": float, "y2": float},
-    #           "segmentation_mask_polygon": [[x, y], ...] | null,
-    #           ...
-    #       },
-    #       ...
-    #   ],
-    #   "image_shape": {"width": int, "height": int},
-    #   "inference_time_ms": float | null,
-    #   "error": str | null
-    # }
-
-    if not payload.get("success", False):
-        error_msg = payload.get("error", "Unknown error from YOLOE API")
-        raise RuntimeError(f"YOLOE API returned error: {error_msg}")
+    # Expect top-level "detections" list; raise clearly if missing
+    if "detections" not in payload:
+        error_msg = payload.get("error", payload.get("detail", "No 'detections' key in response"))
+        raise RuntimeError(f"YOLOE API unexpected response: {error_msg}")
 
     prompts_out: List[str] = []
     bboxes_out: List[Dict[str, float]] = []
     polygons_out: List[List[List[float]]] = []
     confidences_out: List[float] = []
 
-    for det in payload.get("results", []):
-        prompts_out.append(det.get("class_name", ""))
-        bboxes_out.append(det.get("bbox", {}))
-        polygons_out.append(det.get("segmentation_mask_polygon") or [])
-        confidences_out.append(det.get("confidence", 0.0))
+    for det in payload.get("detections", []):
+        # Class name
+        prompts_out.append(det.get("prompt", ""))
+
+        # Bounding box: API returns [x1, y1, x2, y2] list → normalise to dict
+        raw_bbox = det.get("bounding_box", [])
+        if isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) == 4:
+            bboxes_out.append({
+                "x1": float(raw_bbox[0]),
+                "y1": float(raw_bbox[1]),
+                "x2": float(raw_bbox[2]),
+                "y2": float(raw_bbox[3]),
+            })
+        else:
+            bboxes_out.append({})
+
+        # Polygon: [[x,y], ...] list of 2-element lists
+        raw_poly = det.get("polygon") or []
+        polygons_out.append([[float(pt[0]), float(pt[1])] for pt in raw_poly if len(pt) == 2])
+
+        # Confidence
+        confidences_out.append(float(det.get("confidence", 0.0)))
 
     return {
         "prompt": prompts_out,

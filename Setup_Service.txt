@@ -1,7 +1,7 @@
 Yes Bro
-# SVDS System Setup Guide
+# hailo_ai_acts System Setup Guide
 
-A comprehensive step-by-step guide for setting up the Variphi SVDS (Smart Video Detection System) on Raspberry Pi 5 with Hailo AI hardware.
+A comprehensive step-by-step guide for setting up the Variphi hailo_ai_acts (Smart Video Detection System) on Raspberry Pi 5 with Hailo AI hardware.
 
 ## 📋 Quick Start
 
@@ -9,8 +9,8 @@ A comprehensive step-by-step guide for setting up the Variphi SVDS (Smart Video 
 # 1. System preparation
 ./setup_system.sh
 
-# 2. SVDS installation
-cd SVDS && ./install.sh
+# 2. hailo_ai_acts installation
+cd hailo_ai_acts && ./install.sh
 
 # 3. Configure and run
 source setup_env.sh
@@ -100,7 +100,7 @@ sudo reboot
 
 ---
 
-## 📦 Phase 2: SVDS Installation
+## 📦 Phase 2: hailo_ai_acts Installation
 
 ### Step 1: Clone Repository
 ```bash
@@ -177,8 +177,8 @@ KAFKA_PASSWORD=your_kafka_password
 
 ### Method 1: Manual Execution
 ```bash
-# Navigate to SVDS directory
-cd SVDS
+# Navigate to hailo_ai_acts directory
+cd hailo_ai_acts
 
 # Activate environment (IMPORTANT: Use source, not bash)
 source setup_env.sh
@@ -206,17 +206,17 @@ chmod +x run_detection.sh
 ### Method 3: Systemd Service (Production)
 ```bash
 # Create service file
-sudo tee /etc/systemd/system/svds-detection.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/hailo_ai_acts-detection.service > /dev/null << 'EOF'
 [Unit]
-Description=SVDS Detection Pipeline Service
+Description=hailo_ai_acts Detection Pipeline Service
 After=network.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/hailo-apps-infra/SVDS
+WorkingDirectory=/home/pi/hailo-apps-infra/hailo_ai_acts
 Environment=RTSP_LINK=rtsp://your_camera_ip:554/stream
-ExecStart=/home/pi/hailo-apps-infra/SVDS/run_detection.sh $RTSP_LINK
+ExecStart=/home/pi/hailo-apps-infra/hailo_ai_acts/run_detection.sh $RTSP_LINK
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -228,11 +228,11 @@ EOF
 
 # Enable and start service
 sudo systemctl daemon-reload
-sudo systemctl enable svds-detection.service
-sudo systemctl start svds-detection.service
+sudo systemctl enable hailo_ai_acts-detection.service
+sudo systemctl start hailo_ai_acts-detection.service
 
 # Check status
-sudo systemctl status svds-detection.service
+sudo systemctl status hailo_ai_acts-detection.service
 ```
 
 ---
@@ -262,7 +262,7 @@ The script modifies environment variables (`PYTHONPATH`, activates virtual envir
 
 1. **Checks kernel compatibility** for Raspberry Pi
 2. **Sets PYTHONPATH** to include project directories
-3. **Activates virtual environment** (`SVDS`)
+3. **Activates virtual environment** (`hailo_ai_acts`)
 4. **Validates environment** setup
 
 ### Verification
@@ -272,7 +272,7 @@ echo $VIRTUAL_ENV
 echo $PYTHONPATH
 
 # Should show:
-# /home/pi/hailo-apps-infra/SVDS
+# /home/pi/hailo-apps-infra/hailo_ai_acts
 # /home/pi/hailo-apps-infra:/usr/lib/python3/dist-packages:...
 ```
 
@@ -321,9 +321,9 @@ sudo udevadm trigger
 ### Virtual Environment Issues
 ```bash
 # Recreate virtual environment
-rm -rf SVDS
-python3 -m venv --system-site-packages SVDS
-source SVDS/bin/activate
+rm -rf hailo_ai_acts
+python3 -m venv --system-site-packages hailo_ai_acts
+source hailo_ai_acts/bin/activate
 pip install --upgrade pip setuptools wheel
 ```
 
@@ -347,13 +347,13 @@ export https_proxy=http://proxy:port
 ### Check Service Status
 ```bash
 # Systemd service
-sudo systemctl status svds-detection.service
+sudo systemctl status hailo_ai_acts-detection.service
 
 # View logs (systemd journal)
-sudo journalctl -u svds-detection.service -f
+sudo journalctl -u hailo_ai_acts-detection.service -f
 
 # View recent logs
-sudo journalctl -u svds-detection.service --since "1 hour ago"
+sudo journalctl -u hailo_ai_acts-detection.service --since "1 hour ago"
 ```
 
 ### Performance Monitoring
@@ -393,7 +393,7 @@ tail -f detection_output.log
 ### Custom HEF Files
 ```bash
 # Place your HEF files in resources directory
-cp your_model.hef SVDS/resources/
+cp your_model.hef hailo_ai_acts/resources/
 
 # Update configuration.json
 {
@@ -407,18 +407,18 @@ cp your_model.hef SVDS/resources/
 ### Multiple Camera Support
 ```bash
 # Create separate service files for each camera
-sudo cp /etc/systemd/system/svds-detection.service /etc/systemd/system/svds-detection-camera1.service
-sudo cp /etc/systemd/system/svds-detection.service /etc/systemd/system/svds-detection-camera2.service
+sudo cp /etc/systemd/system/hailo_ai_acts-detection.service /etc/systemd/system/hailo_ai_acts-detection-camera1.service
+sudo cp /etc/systemd/system/hailo_ai_acts-detection.service /etc/systemd/system/hailo_ai_acts-detection-camera2.service
 
 # Edit each service with different RTSP links
-sudo nano /etc/systemd/system/svds-detection-camera1.service
-sudo nano /etc/systemd/system/svds-detection-camera2.service
+sudo nano /etc/systemd/system/hailo_ai_acts-detection-camera1.service
+sudo nano /etc/systemd/system/hailo_ai_acts-detection-camera2.service
 
 # Enable and start multiple services
-sudo systemctl enable svds-detection-camera1.service
-sudo systemctl enable svds-detection-camera2.service
-sudo systemctl start svds-detection-camera1.service
-sudo systemctl start svds-detection-camera2.service
+sudo systemctl enable hailo_ai_acts-detection-camera1.service
+sudo systemctl enable hailo_ai_acts-detection-camera2.service
+sudo systemctl start hailo_ai_acts-detection-camera1.service
+sudo systemctl start hailo_ai_acts-detection-camera2.service
 ```
 
 ### Custom Auto-Restart Delays
@@ -452,7 +452,7 @@ pkill -f run_detection.sh
 
 For issues and questions:
 - Check the [troubleshooting section](#-troubleshooting)
-- Review system logs: `sudo journalctl -u svds-detection.service`
+- Review system logs: `sudo journalctl -u hailo_ai_acts-detection.service`
 - Check Hailo community forum
 - Open an issue on the GitHub repository
 
@@ -460,14 +460,14 @@ For issues and questions:
 
 **Script exits immediately:**
 ```bash
-# Check if SVDS directory exists
-ls -la SVDS/
+# Check if hailo_ai_acts directory exists
+ls -la hailo_ai_acts/
 
 # Check if setup_env.sh exists
-ls -la SVDS/setup_env.sh
+ls -la hailo_ai_acts/setup_env.sh
 
 # Check if detection.py exists
-ls -la SVDS/basic_pipelines/detection.py
+ls -la hailo_ai_acts/basic_pipelines/detection.py
 ```
 
 **Environment not activated:**
@@ -483,13 +483,13 @@ which python
 **Service fails to start:**
 ```bash
 # Check service logs
-sudo journalctl -u svds-detection.service -n 50
+sudo journalctl -u hailo_ai_acts-detection.service -n 50
 
 # Check file permissions
-ls -la /home/pi/hailo-apps-infra/SVDS/run_detection.sh
+ls -la /home/pi/hailo-apps-infra/hailo_ai_acts/run_detection.sh
 
 # Make script executable
-chmod +x /home/pi/hailo-apps-infra/SVDS/run_detection.sh
+chmod +x /home/pi/hailo-apps-infra/hailo_ai_acts/run_detection.sh
 ```
 
 ---

@@ -6,6 +6,7 @@ ENV_FILE="${1:-./.env}"
 
 # Key/values to enforce (from env_file_template.txt lines 3-38)
 declare -A KV=(
+  [SENSOR_ID]="SENSOR_ID_PLACEHOLDER"
   [BROKER_PRIMARY]="PLACEHOLDER_BROKER_PRIMARY"
   [BROKER_FAILOVER_TIMEOUT]="30"
   [RESET_THRESHOLD]="3000"
@@ -35,6 +36,8 @@ declare -A KV=(
   [S3_UPLOAD_RETRIES]="3"
   [WS_SERVER_URL]="PLACEHOLDER_WS_SERVER_URL"
   [LOG_LEVEL]="INFO"
+  [YOLOE_API_URL]="http://yoloe.vgiskill.com/predict_prompt"
+  [YOLOE_CONF]="0.1"
 )
 
 touch "$ENV_FILE"

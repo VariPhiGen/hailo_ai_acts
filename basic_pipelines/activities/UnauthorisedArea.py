@@ -33,13 +33,18 @@ class UnauthorisedArea:
         else:
             self.relay = None
 
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
         """Main entry point for this activity"""
         current_time = time.time()
-
+        
+        # Snapshot the current frame once for this entire run() cycle.
+        current_frame = self.parent.image.copy() if self.parent.image is not None else None
+        if current_frame is None:
+            return
+        
         # Loop through the scheduled times (you may have multiple schedules)
         for schedule in self.parameters["scheduled_time"]:
             # Get the time intervals (start_time, end_time) and days from the current schedule
@@ -112,11 +117,11 @@ class UnauthorisedArea:
 
                                     # Create violation event
                                     box = self.parent.detection_boxes[idx]
-                                    xywh = xywh_original_percentage(box)
+                                    xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
                                     datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
                                     self.parent.create_result_events(
                                         xywh, obj_class, f"Security-Unauthorized Area",
-                                        {"zone_name": zone_name}, datetimestamp, 1, self.parent.image
+                                        {"zone_name": zone_name}, datetimestamp, 1, current_frame
                                     )
                     else:
                         # Person is not in zone anymore, remove from tracking

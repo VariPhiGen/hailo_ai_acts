@@ -36,20 +36,20 @@ class TimeBasedUnauthorizedAccess:
             self.relay = None
 
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
         """Main entry point for this activity"""
-        """
-        Monitor for areas that should have someone present but don't.
-        Alerts when no person is detected in a zone for too long.
-        """
-        print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
-            # Loop through the scheduled times (you may have multiple schedules)
+            
+            # Snapshot the current frame once for this entire run() cycle.
+            current_frame = self.parent.image.copy() if self.parent.image is not None else None
+            if current_frame is None:
+                return
+            
+            # Loop through the scheduled times
             for schedule in self.parameters["scheduled_time"]:
                 # Get the time intervals (start_time, end_time) and days from the current schedule
                 time_start_end = schedule["time_start_end"]
@@ -100,18 +100,20 @@ class TimeBasedUnauthorizedAccess:
                                                 print(f"⚠️ Relay operation failed: {e}. Continuing without relay control.")
                                         if tracker_id not in self.violation_id_data:
                                             self.violation_id_data.append(tracker_id)
-                                            xywh=xywh_original_percentage(box)
-                                            datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
-                                            self.parent.create_result_events(xywh,obj_class,f"Security-Unauthorized Access",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
+                                            xywh = xywh_original_percentage(box, self.parent.original_width, self.parent.original_height)
+                                            datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
+                                            self.parent.create_result_events(xywh, obj_class, f"Security-Unauthorized Access", {"zone_name": zone_name}, datetimestamp, 1, current_frame)
 
         #print("Yes Running Successfully", self.zone_data,self.parameters)
 
     def cleaning(self):
-        self.violation_id_data=[ tracker_id for tracker_id in self.violation_id_data if tracker_id in self.parent.last_n_frame_tracker_ids]
+        self.violation_id_data = [
+            tracker_id for tracker_id in self.violation_id_data
+            if tracker_id in self.parent.last_n_frame_tracker_ids
+        ]
         for zone_name in self.zone_data.keys():
-            self.running_data = {
+            self.running_data[zone_name] = {
                 key: value
                 for key, value in self.running_data[zone_name].items()
                 if key in self.parent.last_n_frame_tracker_ids
             }
-        

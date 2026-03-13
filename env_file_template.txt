@@ -1,10 +1,13 @@
+# Device Identity
+SENSOR_ID=SENSOR_ID_PLACEHOLDER
+
 # Kafka Brokers
 BROKER_PRIMARY=10.0.0.1:9092
 BROKER_SECONDARY=10.0.0.2:9092
 BROKER_FAILOVER_TIMEOUT=30
 RESET_THRESHOLD=3000
 SEND_ANALYTICS_PIPELINE=aianalytics
-SEND_EVENTS_PIPELINE=svds_violation
+SEND_EVENTS_PIPELINE=acts_violation
 LOG_TOPIC=error_log
 
 # AWS S3 Primary (normal/Kafka)
@@ -68,4 +71,10 @@ WS_SERVER_URL=ws://54.210.59.224:8000/ws
 # Optional: Logging / Debug
 # ------------------------------
 LOG_LEVEL=INFO
+
+# ------------------------------
+# YOLOE External Inference API
+# ------------------------------
+YOLOE_API_URL=http://yoloe.vgiskill.com/predict_prompt
+YOLOE_CONF=0.1
 

@@ -21,17 +21,12 @@ def make_labelled_image(message, event_category=None, event_subcategory=None):
         for bbox in message["absolute_bbox"]:
             x_pct, y_pct, w_pct, h_pct = map(float, bbox["xywh"])
 
-            # Convert percentages to pixel values
-            x_center = int(x_pct * width/100)
-            y_center = int(y_pct * height/100)
-            w = int(w_pct * width/100)
-            h = int(h_pct * height/100)
-
-            # Convert (x,y,w,h) center format → top-left and bottom-right
-            x1 = int(x_center)
-            y1 = int(y_center)
-            x2 = int(x_center + w)
-            y2 = int(y_center + h)
+            # xywh_original_percentage stores [x_topleft%, y_topleft%, width%, height%].
+            # Convert percentages back to absolute pixel coordinates.
+            x1 = int(x_pct * width / 100)
+            y1 = int(y_pct * height / 100)
+            x2 = int(x1 + w_pct * width / 100)
+            y2 = int(y1 + h_pct * height / 100)
 
             # Pick color: prefer bbox color, then message color, else default
             color_hex = (bbox.get("color") or message.get("color") or "#FF0000").lstrip("#")

@@ -1,4 +1,5 @@
 import time
+import copy
 from datetime import datetime
 import pytz
 from activities.activity_helper_utils import (
@@ -58,15 +59,21 @@ class WAH:
         self.violation_id_data["missing"] = []
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
-        #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>2:
             self.parameters["last_check_time"]=time.time()
             wah_objects=self.parameters["subcategory_mapping"]
+            
+            # Snapshot the current frame once for this entire run() cycle.
+            # self.parent.image is a live reference overwritten every frame by the GStreamer
+            # callback; capturing a copy here guarantees the violation image matches the
+            # detections we are about to analyse (no ghost frames, no off-by-one frame).
+            current_frame = self.parent.image.copy() if self.parent.image is not None else None
+            if current_frame is None:
+                return
             
             # Get condition_label from parameters (replaces check_zone_label)
             condition_label = self.parameters.get("condition_label", None)
@@ -88,12 +95,20 @@ class WAH:
             # Get YOLOE results for condition_label segmentation
             yoloe_result_data = None
             yoloe_confidence_threshold = self.parameters.get("yoloe_confidence", 0.0)
+            # Max age (seconds) before a YOLOE result is considered too stale to use.
+            # Configurable via parameters["yoloe_max_stale_age"] in configuration.json.
+            yoloe_max_stale_age = self.parameters.get("yoloe_max_stale_age", 60)
             
             if condition_label_enabled:
                 with self.parent.yoloe_lock:
                     yoloe_results = self.parent.yoloe_results
                     if yoloe_results and yoloe_results.get("result"):
-                        yoloe_result_data = yoloe_results["result"]
+                        # Staleness guard: discard results older than yoloe_max_stale_age seconds
+                        last_run = yoloe_results.get("last_run", 0.0)
+                        if (time.time() - last_run) <= yoloe_max_stale_age:
+                            # Deep-copy inside the lock to prevent concurrent mutation by
+                            # the YOLOE background thread overwriting the dict mid-iteration.
+                            yoloe_result_data = copy.deepcopy(yoloe_results["result"])
             
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             wah_indices = [i for i, cls in enumerate(self.parent.classes) if cls in wah_objects.keys()]
@@ -242,7 +257,7 @@ class WAH:
                                 event_metadata,
                                 datetimestamp,
                                 person_detection_score,
-                                self.parent.image,
+                                current_frame,
                             )
 
     def cleaning(self):

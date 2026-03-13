@@ -35,23 +35,22 @@ class UnsafeZone:
         self.violation_id_data = []
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
         """Main entry point for this activity"""
-        """
-        Monitor for areas that should have someone present but don't.
-        Alerts when no person is detected in a zone for too long.
-        """
-        #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
-            self.relay.check_auto_off(self.switch_relay)
+            if self.relay is not None:
+                self.relay.check_auto_off(self.switch_relay)
+            
+            # Snapshot the current frame once for this entire run() cycle.
+            current_frame = self.parent.image.copy() if self.parent.image is not None else None
+            if current_frame is None:
+                return
             
             offender_indices = [i for i, cls in enumerate(self.parent.classes) if cls in self.parameters["subcategory_mapping"]]
-            print(offender_indices, self.running_data)
 
             for idx in offender_indices:
                 box=self.parent.detection_boxes[idx]
@@ -80,7 +79,7 @@ class UnsafeZone:
                                 self.violation_id_data.append(tracker_id)
                                 xywh=xywh_original_percentage(box,self.parent.original_width,self.parent.original_height)
                                 datetimestamp=f"{datetime.now(self.timezone).isoformat()}"
-                                self.parent.create_result_events(xywh,obj_class,f"Hazardous Area-Unsafe Zone",{"zone_name":zone_name},datetimestamp,1,self.parent.image)
+                                self.parent.create_result_events(xywh, obj_class, f"Hazardous Area-Unsafe Zone", {"zone_name": zone_name}, datetimestamp, 1, current_frame)
             
         #print("Yes Running Successfully", self.zone_data,self.parameters)
 

@@ -126,7 +126,7 @@ class user_app_callback_class(app_callback_class):
         self.recorder=None
         
         # Initialize cropping directory path once
-        self.cropping_dir = os.path.join(os.getcwd(), "SVDS2", "original_croppings")
+        self.cropping_dir = os.path.join(os.getcwd(), "hailo_ai_acts", "original_croppings")
         # Create directory if it doesn't exist
         os.makedirs(self.cropping_dir, exist_ok=True)
         
@@ -845,7 +845,7 @@ if __name__ == "__main__":
     app = GStreamerDetectionApp(app_callback, user_data)
     
     try:
-        print("🚀 Starting SVDS detection system...")
+        print("🚀 Starting AI Acts detection system...")
         print("💡 Press Ctrl+C to stop gracefully")
         app.run()
     except KeyboardInterrupt:

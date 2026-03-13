@@ -80,6 +80,7 @@ class user_app_callback_class(app_callback_class):
         self.anchor_points_original = None
         self.detection_score = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
+        self.timezone_str = 'Asia/Kolkata'  # overwritten from config at startup
         self.last_n_frame_tracker_ids = None
         # Initialize a deque to store tracker_ids for the last n frames
         self.LNFCTI = deque(maxlen=30)
@@ -138,7 +139,7 @@ class user_app_callback_class(app_callback_class):
         self.recorder=None
         
         # Initialize cropping directory path once
-        self.cropping_dir = os.path.join(os.getcwd(), "SVDS2", "original_croppings")
+        self.cropping_dir = os.path.join(os.getcwd(), "hailo_ai_acts", "original_croppings")
         # Create directory if it doesn't exist
         os.makedirs(self.cropping_dir, exist_ok=True)
         
@@ -188,6 +189,8 @@ class user_app_callback_class(app_callback_class):
             self.yoloe_intervals.append(interval)
             self.yoloe_condition_labels.extend(condition_labels)
 
+
+
         # unique condition labels across all activities
         self.yoloe_condition_labels = sorted(list(set(self.yoloe_condition_labels)))
 
@@ -221,10 +224,13 @@ class user_app_callback_class(app_callback_class):
             now_ts = time.time()
 
             try:
-                # Take a snapshot of current frame for YOLOE
+                # Take a snapshot of current full-resolution frame for YOLOE.
+                # IMPORTANT: use self.image (original pixel space), NOT self.model_image
+                # (letterboxed). This ensures YOLOE polygon coordinates align with the
+                # detection_boxes which are already de-letterboxed to original space.
                 image = None
                 with self.yoloe_lock:
-                    image = self.model_image.copy() if self.model_image is not None else None
+                    image = self.image.copy() if self.image is not None else None
 
                 if image is not None:
                     # Decide if at least one activity needs YOLOE at this tick
@@ -370,23 +376,24 @@ class user_app_callback_class(app_callback_class):
     
 
     
-    def _process_image_lightweight(self, image,anpr_status):
+    def _process_image_lightweight(self, image, anpr_status):
         """Lightweight image processing without heavy operations."""
         try:
+            # Capture dimensions from the numpy array BEFORE encoding to bytes.
+            # .shape is not available on bytes, so this must happen first.
+            height, width = image.shape[:2]
             if anpr_status is not None:
-                # Minimal processing - just get dimensions
                 anprimage_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 image = encode_frame_to_bytes(anprimage_rgb, 100)
-                height, width = image.shape[:2]
                 anpr_status = "True"
             else:
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                height, width = image.shape[:2]
                 image = encode_frame_to_bytes(image_rgb, 90)  # Lower quality for speed
                 anpr_status = "False"
             return image, height, width, anpr_status
         except Exception as e:
             print(f"DEBUG: Error in image processing: {e}")
+            return None, None, None, None
 
     
     async def _async_save_rtsp(self, image, suffix):
@@ -881,7 +888,16 @@ if __name__ == "__main__":
         kafka_thread.start()
     
     #Getting Data available
-    sensor_id=config.get("sensor_id")
+    # sensor_id: env variable takes priority so each device can be identified
+    # without touching configuration.json. Falls back to config for compatibility.
+    sensor_id = os.getenv("SENSOR_ID") or config.get("sensor_id")
+
+    # Global timezone — single source of truth for all activities.
+    # Individual activity parameters may still override it if needed.
+    global_timezone = config.get("timezone", "Asia/Kolkata")
+    user_data.timezone_str = global_timezone
+    user_data.ist_timezone = pytz.timezone(global_timezone)
+
     available_activities = config.get("available_activities")
     active_activities = config.get("active_activities")
     user_data.sensor_id = sensor_id
@@ -948,7 +964,7 @@ if __name__ == "__main__":
             
             else:
                 zone_data={zone: Polygon(coords) for zone, coords in details["zones"].items()}
-                parameters_data=details["parameters"]
+                parameters_data[activity] = details["parameters"]
                 ActivityClass = load_activity_class(activity)
                 if not ActivityClass:
                     continue
@@ -990,7 +1006,7 @@ if __name__ == "__main__":
     app = GStreamerDetectionApp(app_callback, user_data)
     
     try:
-        print("🚀 Starting SVDS detection system...")
+        print("🚀 Starting AI Acts detection system...")
         print("💡 Press Ctrl+C to stop gracefully")
         app.run()
     except KeyboardInterrupt:

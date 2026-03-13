@@ -6,6 +6,7 @@ from activities.activity_helper_utils import (
 )
 import numpy as np
 import imagehash
+from PIL import Image
 from scipy.stats import entropy
 import cv2
 
@@ -43,8 +44,7 @@ class CameraTampering:
             self.running_data[zone_name]={}
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
         #Extra Variable Related to Activity
@@ -58,7 +58,14 @@ class CameraTampering:
         self.ref_hash=None
 
     def run(self):
-        frame=self.parent.model_image
+        # Snapshot the frame used for analysis and the event image at the same instant.
+        # model_image is used for computer-vision analysis; self.parent.image is the
+        # full-res version for the event upload — both must be frozen NOW before the
+        # GStreamer callback can overwrite them.
+        if self.parent.model_image is None or self.parent.image is None:
+            return
+        frame = self.parent.model_image.copy()
+        current_frame = self.parent.image.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         brightness = np.mean(gray)
         variance = np.var(gray)
@@ -83,9 +90,9 @@ class CameraTampering:
 
         tampering = (
             brightness_change > self.parameters["brightness_thres"] or
-            variance < 15 or
-            entropy_val < 1.5 or
-            edge_ratio < 0.008
+            variance < self.parameters.get("variance_thres", 15) or
+            entropy_val < self.parameters.get("entropy_thres", 1.5) or
+            edge_ratio < self.parameters.get("edge_ratio_thres", 0.008)
         )
 
         # Initialize ref_hash if it has not been set (first-time setup or reset)
@@ -101,17 +108,18 @@ class CameraTampering:
 
         # Check tampering condition based on time intervals and event triggering
         if int(time.time() - self.running_data["alert_interval"]) > self.running_data["alert_interval"]:
-            if tampering or hash_diff > 20:
+            hash_diff_thres = self.parameters.get("hash_diff_thres", 20)
+            if tampering or hash_diff > hash_diff_thres:
                 self.running_data["frame_count"] += 1
 
             if self.running_data["frame_count"] > 0:
                 xywh = [0, 0, 100, 100]
                 datetimestamp = f"{datetime.now(self.timezone).isoformat()}"
-                if hash_diff >20:
-                    self.create_result_events(xywh, "Tampering", "Security-Camera_Movement", {}, datetimestamp, 1,self.parent.image)
+                if hash_diff > hash_diff_thres:
+                    self.create_result_events(xywh, "Tampering", "Security-Camera_Movement", {}, datetimestamp, 1, current_frame)
                     print("Work Done Movement")
-                else:    
-                    self.create_result_events(xywh, "Tampering", "Security-Camera_Tampering", {}, datetimestamp, 1,self.parent.image)
+                else:
+                    self.create_result_events(xywh, "Tampering", "Security-Camera_Tampering", {}, datetimestamp, 1, current_frame)
                     print("Work Done Tampering")
 
                 # Update the reference frame after tampering

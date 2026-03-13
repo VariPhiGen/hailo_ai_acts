@@ -6,6 +6,7 @@ TARGET="${1:-configuration.json}"
 cat > "$TARGET" <<EOF
 {
   "sensor_id": "SENSOR_ID_PLACEHOLDER",
+  "timezone": "Asia/Kolkata",
   "default_arguments": {
     "hef_path": "$HOME/hailo_ai_acts/resources/models/hailo8l/model.hef",
     "labels-json": "$HOME/hailo_ai_acts/resources/models/hailo8l/labels.json"
@@ -18,10 +19,14 @@ cat > "$TARGET" <<EOF
     "traffic_overspeeding_distancewise",
     "TimeBasedUnauthorizedAccess",
     "UnsafeZone",
-    "PPE"
+    "PPE",
+    "WAH",
+    "CameraTampering"
   ],
   "active_activities": [
-    "PPE"
+    "PPE",
+    "WAH",
+    "CameraTampering"
   ],
   "radar_config": {
     "port": "/dev/ttyACMr",
@@ -77,7 +82,6 @@ cat > "$TARGET" <<EOF
           "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
           "days": ["Monday", "Wednesday", "Friday"]
         }],
-        "timezone":"Asia/Tokyo",
         "last_check_time":0
       }
     },
@@ -90,7 +94,6 @@ cat > "$TARGET" <<EOF
         "relay":1,
         "switch_relay":[1,2],
         "frame_accuracy": 2,
-        "timezone":"Asia/Tokyo",
         "last_check_time":0
       }
     },
@@ -102,27 +105,29 @@ cat > "$TARGET" <<EOF
         "subcategory_mapping":{"head":"No Helmet","no-vest":"No Vest"},
         "switch_relay":[1,2],
         "frame_accuracy": 5,
-        "timezone":"Asia/Kolkata",
         "last_check_time":0,
         "relay":0
       }
     },
     "WAH":{
-  "zones":{
-      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
-  },
-  "parameters":{
-      "frame_accuracy": 10,
-      "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
-      "no_zone":1,
-      "relay":1,
-      "switch_relay":[1,2],
-    "timezone":"Asia/Kolkata",
-    "missing_subcategory":"No Harness or Hooks",
-    "last_check_time":0
-}
-},
+      "zones":{
+        "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
+      },
+      "parameters":{
+        "frame_accuracy": 10,
+        "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
+        "condition_label":["scaffolding","bricks"],
+        "missing_subcategory":"No Harness or Hooks",
+        "no_zone":1,
+        "relay":1,
+        "switch_relay":[1,2],
+        "last_check_time":0,
+        "yoloe":1,
+        "yoloe_interval":300,
+        "yoloe_confidence":0.1,
+        "yoloe_max_stale_age":60
+      }
+    },
     "CameraTampering":{
       "zones":{
         "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
@@ -132,9 +137,12 @@ cat > "$TARGET" <<EOF
         "alert_interval": 30,
         "motion_thres":0.65,
         "brightness_thres":60,
+        "variance_thres":15,
+        "entropy_thres":1.5,
+        "edge_ratio_thres":0.008,
+        "hash_diff_thres":20,
         "relay":1,
         "switch_relay":[1,2],
-        "timezone":"Asia/Kolkata",
         "last_check_time":0
       }
     }

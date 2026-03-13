@@ -1,7 +1,8 @@
 {
-  "sensor_id": "SENSOR_ID_PLACEHOLDER",
+  "sensor_id": "SENSOR_ID_PLACEHOLDER (overridden by SENSOR_ID env variable)",
+  "timezone": "Asia/Kolkata",
   "default_arguments": {
-    "hef_path": "/home/arresto/SVDS/resources/models/hailo8l/yolov11s.hef",
+    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/yolov11s.hef",
     "labels-json": "None"
   },
   "dashboard_connectivity":{
@@ -16,10 +17,6 @@
   "active_activities": [
     "UnsafeZone"
   ],
-  "yoloe_control": {
-    "enabled": 1,
-    "cooldown_sec": 3
-  },
   "radar_config": {
       "port": "/dev/ttyACMr",
       "baudrate": 9600,
@@ -124,7 +121,8 @@
     "last_check_time":0,
     "yoloe":1,
     "yoloe_interval":300,
-    "yoloe_confidence":0.1
+    "yoloe_confidence":0.1,
+    "yoloe_max_stale_age":60
 }
 },
 "CameraTampering":{
@@ -137,6 +135,10 @@
 		 "alert_interval": 30,
       "motion_thres":0.65,
       "brightness_thres":60,
+      "variance_thres":15,
+      "entropy_thres":1.5,
+      "edge_ratio_thres":0.008,
+      "hash_diff_thres":20,
       "relay":1,
       "switch_relay":[1,2],
     "timezone":"Asia/Kolkata",

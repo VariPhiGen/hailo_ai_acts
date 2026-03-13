@@ -58,15 +58,20 @@ class WAH:
         self.violation_id_data["missing"] = []
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
         #print(self.parent.frame_monitor_count)
-        if time.time()-self.parameters["last_check_time"]>1:
+        if time.time()-self.parameters["last_check_time"]>2:
             self.parameters["last_check_time"]=time.time()
             wah_objects=self.parameters["subcategory_mapping"]
+            
+            # Snapshot the current frame once for this entire run() cycle.
+            current_frame = self.parent.image.copy() if self.parent.image is not None else None
+            if current_frame is None:
+                return
+            
             check_zone_label = self.parameters.get("check_zone_label", None)
             # If check_zone_label is empty/None, bypass scaffolding check entirely
             check_zone_label_enabled = check_zone_label is not None and check_zone_label != "" and (
@@ -215,7 +220,7 @@ class WAH:
                                 event_metadata,
                                 datetimestamp,
                                 person_detection_score,
-                                self.parent.image,
+                                current_frame,
                             )
 
     def cleaning(self):

@@ -60,7 +60,7 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-print_status "Starting SVDS Detection Pipeline"
+print_status "Starting AI Acts Detection Pipeline"
 print_status "Config File: $CONFIG_FILE"
 print_status "Camera Input: $CAMERA_INPUT"
 

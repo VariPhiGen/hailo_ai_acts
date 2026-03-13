@@ -78,7 +78,7 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-print_status "Starting SVDS Detection Pipeline with continuous auto-restart"
+print_status "Starting AI Acts Detection Pipeline with continuous auto-restart"
 print_status "Config File: $CONFIG_FILE"
 print_status "RTSP Link: $RTSP_LINK"
 print_status "Max retries: $MAX_RETRIES (continuous operation)"
@@ -88,9 +88,9 @@ run_detection() {
     local attempt=$1
     print_status "Attempt $attempt: Starting detection pipeline..."
     
-    # Change to SVDS directory
-    #cd SVDS || {
-    #    print_error "Failed to change to SVDS directory"
+    # Change to hailo_ai_acts directory
+    #cd hailo_ai_acts || {
+    #    print_error "Failed to change to hailo_ai_acts directory"
     #    return 1
     #}
     

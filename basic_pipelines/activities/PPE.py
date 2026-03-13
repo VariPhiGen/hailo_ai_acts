@@ -53,15 +53,19 @@ class PPE:
             self.violation_id_data[acts]=[]
         
         self.last_check_time = self.parameters.get("last_check_time", 0)
-        self.timezone_str = self.parameters.get("timezone", "Asia/Kolkata")
-        # Set up the timezone from the provided string
+        self.timezone_str = self.parameters.get("timezone") or self.parent.timezone_str
         self.timezone = pytz.timezone(self.timezone_str)
 
     def run(self):
-        #print(self.parent.frame_monitor_count)
         if time.time()-self.parameters["last_check_time"]>1:
             self.parameters["last_check_time"]=time.time()
             ppe_objects=self.parameters["subcategory_mapping"]
+            
+            # Snapshot the current frame once for this entire run() cycle.
+            current_frame = self.parent.image.copy() if self.parent.image is not None else None
+            if current_frame is None:
+                return
+            
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             ppe_indices = [i for i, cls in enumerate(self.parent.classes) if cls in ppe_objects.keys()]
 
@@ -140,7 +144,7 @@ class PPE:
                                             event_metadata,
                                             datetimestamp,
                                             ppe_confidence,
-                                            self.parent.image,
+                                            current_frame,
                                         )
 
     def cleaning(self):
