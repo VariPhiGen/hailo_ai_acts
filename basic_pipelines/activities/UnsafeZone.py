@@ -18,7 +18,7 @@ class UnsafeZone:
         self.running_data = {}
 
         #Initialize Relay
-        if parameters["relay"]==1:
+        if parameters.get("relay", 0)==1:
             try:
                 if self.parent.relay_handler.device==None:
                     success = self.parent.relay_handler.initiate_relay()
@@ -58,14 +58,14 @@ class UnsafeZone:
                 tracker_id=self.parent.tracker_ids[idx]
                 anchor = self.parent.anchor_points_original[idx]
                 for zone_name, zone_polygon in self.zone_data.items():
-                    if is_bottom_in_zone(anchor, zone_polygon) and (tracker_id not in self.violation_id_data or self.parameters["relay"]==1):
+                    if is_bottom_in_zone(anchor, zone_polygon) and (tracker_id not in self.violation_id_data or self.parameters.get("relay", 0)==1):
                         if tracker_id not in self.running_data[zone_name]:
                             self.running_data[zone_name][tracker_id] = 1
                         else:
                             self.running_data[zone_name][tracker_id]+= 1
 
                         if self.running_data[zone_name][tracker_id] > self.parameters["frame_accuracy"]:
-                            if self.relay!=None and self.parameters["relay"]==1:
+                            if self.relay!=None and self.parameters.get("relay", 0)==1:
                                 try:
                                     status=self.relay.state(0)
                                     true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]

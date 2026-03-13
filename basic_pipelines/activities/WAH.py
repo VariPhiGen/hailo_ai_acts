@@ -31,7 +31,7 @@ class WAH:
         self.zone_check_enabled = self.parameters.get("no_zone", 0) != 1
 
         #Initialize Relay
-        if parameters["relay"]==1:
+        if parameters.get("relay", 0)==1:
             try:
                 if self.parent.relay_handler.device==None:
                     success = self.parent.relay_handler.initiate_relay()
@@ -218,7 +218,7 @@ class WAH:
                     self.running_data[zone_name][tracker_id]["missing"] += 1
 
                     if self.running_data[zone_name][tracker_id]["missing"] > self.parameters["frame_accuracy"]:
-                        if self.relay!=None and self.parameters["relay"]==1:
+                        if self.relay!=None and self.parameters.get("relay", 0)==1:
                             try:
                                 status=self.relay.state(0)
                                 true_indexes = [(i+1) for i, x in enumerate(status) if isinstance(x, bool) and x is True]

@@ -17,7 +17,7 @@ class UnauthorisedArea:
         self.violation_id_data = []
 
         # Initialize Relay
-        if parameters["relay"] == 1:
+        if parameters.get("relay", 0) == 1:
             try:
                 if self.parent.relay_handler.device == None:
                     success = self.parent.relay_handler.initiate_relay()
@@ -103,7 +103,7 @@ class UnauthorisedArea:
                                     self.violation_id_data.append(tracker_id)
 
                                     # Trigger relay if configured
-                                    if self.relay != None and self.parameters["relay"] == 1:
+                                    if self.relay != None and self.parameters.get("relay", 0) == 1:
                                         try:
                                             status = self.relay.state(0)
                                             true_indexes = [(i+1) for i, x in enumerate(status)

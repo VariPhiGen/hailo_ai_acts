@@ -23,7 +23,7 @@ class CameraTampering:
         self.running_data = {}
 
         #Initialize Relay
-        if parameters["relay"]==1:
+        if parameters.get("relay", 0)==1:
             try:
                 if self.parent.relay_handler.device==None:
                     success = self.parent.relay_handler.initiate_relay()
