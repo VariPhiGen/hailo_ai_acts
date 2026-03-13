@@ -66,7 +66,7 @@
       "parameters":{
           "subcategory_mapping":["person"],
           "frame_accuracy": 2,
-          "relay":1,
+          "relay":0,
       "switch_relay":[1,2],
         "scheduled_time": [{
           "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
@@ -82,7 +82,7 @@
   },
   "parameters":{
       "subcategory_mapping":["person"],
-      "relay":1,
+      "relay":0,
       "switch_relay":[1,2],
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
@@ -101,7 +101,7 @@
       "frame_accuracy": 2,
     "timezone":"Asia/Tokyo",
     "last_check_time":0,
-    "relay":1
+    "relay":0
 }
 },
 "WAH":{
@@ -114,7 +114,7 @@
       "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
       "condition_label":["scaffolding","bricks"],
       "no_zone":1,
-      "relay":1,
+      "relay":0,
       "switch_relay":[1,2],
     "timezone":"Asia/Kolkata",
     "missing_subcategory":"No Harness or Hooks",
@@ -139,7 +139,7 @@
       "entropy_thres":1.5,
       "edge_ratio_thres":0.008,
       "hash_diff_thres":20,
-      "relay":1,
+      "relay":0,
       "switch_relay":[1,2],
     "timezone":"Asia/Kolkata",
     "last_check_time":0
