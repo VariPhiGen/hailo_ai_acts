@@ -534,15 +534,21 @@ class KafkaHandler:
                     ]
                 max_confidence = max(confidence_values) if confidence_values else 0
 
+                # Get configurable confidence thresholds
+                dash_cfg = self.config.get("dashboard_connectivity", {})
+                api_confidence_threshold = dash_cfg.get("api_confidence_threshold", 0.85)
+                kafka_confidence_min = dash_cfg.get("kafka_confidence_min", 0.7)
+                kafka_confidence_max = dash_cfg.get("kafka_confidence_max", 0.85)
+
                 if api_m:
-                    if max_confidence >= 0.85:
+                    if max_confidence >= api_confidence_threshold:
                         self.api_handler.process_and_submit(message, topic)
                     else:
-                        print(f"DEBUG: Skipping API submission, confidence too low ({max_confidence:.2f})")
+                        print(f"DEBUG: Skipping API submission, confidence too low ({max_confidence:.2f} < {api_confidence_threshold})")
                 
                 if kafka_m:
-                    if not (0.7 <= max_confidence < 0.85):
-                        print(f"DEBUG: Skipping Kafka submission, confidence {max_confidence:.2f} outside 0.70-0.85")
+                    if not (kafka_confidence_min <= max_confidence < kafka_confidence_max):
+                        print(f"DEBUG: Skipping Kafka submission, confidence {max_confidence:.2f} outside {kafka_confidence_min:.2f}-{kafka_confidence_max:.2f}")
                         return True
                     image_bytes = message.get("org_img")
                     snap_shot_bytes = message.get("snap_shot")
