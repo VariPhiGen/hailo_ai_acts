@@ -132,7 +132,7 @@ cat > "$TARGET" <<EOF
         "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
       },
       "parameters":{
-        "frame_accuracy": 10,
+        "frame_accuracy": 100,
         "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
         "condition_label":["scaffolding","bricks"],
         "missing_subcategory":"No Harness or Hooks",

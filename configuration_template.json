@@ -71,7 +71,6 @@
         "scheduled_time": [{
           "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
           "days": ["Monday", "Wednesday", "Friday"]}],
-        "timezone":"Asia/Tokyo",
         "last_check_time":0
   }
 },
@@ -85,7 +84,6 @@
       "relay":0,
       "switch_relay":[1,2],
       "frame_accuracy": 2,
-    "timezone":"Asia/Tokyo",
     "last_check_time":0
 }
 },
@@ -99,7 +97,6 @@
       "no_zone":1,
       "switch_relay":[1,2],
       "frame_accuracy": 2,
-    "timezone":"Asia/Tokyo",
     "last_check_time":0,
     "relay":0
 }
@@ -116,7 +113,6 @@
       "no_zone":1,
       "relay":0,
       "switch_relay":[1,2],
-    "timezone":"Asia/Kolkata",
     "missing_subcategory":"No Harness or Hooks",
     "last_check_time":0,
     "yoloe":1,
@@ -141,7 +137,6 @@
       "hash_diff_thres":20,
       "relay":0,
       "switch_relay":[1,2],
-    "timezone":"Asia/Kolkata",
     "last_check_time":0
 }
 }
