@@ -98,6 +98,7 @@ class WAH:
             # Max age (seconds) before a YOLOE result is considered too stale to use.
             # Configurable via parameters["yoloe_max_stale_age"] in configuration.json.
             yoloe_max_stale_age = self.parameters.get("yoloe_max_stale_age", 60)
+            wah_confidence_threshold = self.parameters.get("wah_confidence_threshold", 0.7)
             
             if condition_label_enabled:
                 with self.parent.yoloe_lock:
@@ -193,7 +194,7 @@ class WAH:
                         wah_box=self.parent.detection_boxes[wah_idx]
                         wah_obj_class=self.parent.classes[wah_idx]
                         wah_confidence=self.parent.detection_score[wah_idx]
-                        if wah_confidence < 0.7:
+                        if wah_confidence < wah_confidence_threshold:
                             continue
                         if is_left_in_zone(wah_box, person_poly) or is_right_in_zone(wah_box, person_poly):
                             wah_found = True

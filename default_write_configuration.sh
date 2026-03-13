@@ -133,6 +133,7 @@ cat > "$TARGET" <<EOF
       },
       "parameters":{
         "frame_accuracy": 100,
+        "wah_confidence_threshold": 0.7,
         "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
         "condition_label":["scaffolding","bricks"],
         "missing_subcategory":"No Harness or Hooks",
@@ -143,7 +144,7 @@ cat > "$TARGET" <<EOF
         "yoloe":1,
         "yoloe_interval":300,
         "yoloe_confidence":0.1,
-        "yoloe_max_stale_age":60
+        "yoloe_max_stale_age":120
       }
     },
     "CameraTampering":{

@@ -108,6 +108,7 @@
   },
   "parameters":{
       "frame_accuracy": 10,
+      "wah_confidence_threshold": 0.7,
       "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
       "condition_label":["scaffolding","bricks"],
       "no_zone":1,
