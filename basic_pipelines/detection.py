@@ -186,7 +186,7 @@ class user_app_callback_class(app_callback_class):
                 "condition_labels": condition_labels,
                 "interval": interval,
                 "confidence": confidence,
-                "next_run_ts": now_ts + 10,  # first run 10s after startup, then every interval
+                "next_run_ts": now_ts + 1,  # first run 1s after startup, then every interval
             }
             self.yoloe_intervals.append(interval)
             self.yoloe_condition_labels.extend(condition_labels)
@@ -230,22 +230,31 @@ class user_app_callback_class(app_callback_class):
             now_ts = time.time()
 
             try:
-                # Use model_image (letterboxed, smaller) for YOLOE to reduce payload size.
-                # We also capture the current ratio/padx/pady so that WAH.py can convert
-                # the returned polygon coords back from model space → original pixel space.
+                # Use model_image (smaller letterboxed frame) for faster YOLOE uploads.
+                # If model_image isn't ready yet (pipeline just started), fall back to
+                # self.image with identity transform so the first call is never skipped.
                 image = None
-                scale_ratio = None
-                scale_padx = None
-                scale_pady = None
+                scale_ratio = 1.0
+                scale_padx  = 0
+                scale_pady  = 0
                 with self.yoloe_lock:
                     if self.model_image is not None:
                         image = self.model_image.copy()
-                        scale_ratio = self.ratio
-                        scale_padx  = self.padx
-                        scale_pady  = self.pady
+                        if self.ratio is not None:
+                            scale_ratio = self.ratio
+                            scale_padx  = self.padx if self.padx is not None else 0
+                            scale_pady  = self.pady if self.pady is not None else 0
+                    elif self.image is not None:
+                        # Fallback: full-res image before model pipeline is warm
+                        image = self.image.copy()
+                        # Identity transform — coords are already in original space
+                        scale_ratio = 1.0
+                        scale_padx  = 0
+                        scale_pady  = 0
 
-                # Guard: only proceed if scale params are ready (set after first frame parse)
-                if image is None or scale_ratio is None or scale_padx is None or scale_pady is None:
+                if image is None:
+                    # No frame at all yet — pipeline hasn't started
+                    print("⚠️  [YOLOE] Waiting for first frame...")
                     time.sleep(base_sleep)
                     continue
 
