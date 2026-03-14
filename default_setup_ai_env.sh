@@ -52,32 +52,24 @@ touch "$ENV_FILE"
 
 for entry in "${TEMPLATE_LINES[@]}"; do
   key="${entry%%=*}"
-  template_value="${entry#*=}"
+  default_value="${entry#*=}"
 
   if grep -qE "^${key}=" "$ENV_FILE"; then
     # Key exists — extract current value
     current_value="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d'=' -f2-)"
 
-    if [[ "$template_value" != *"PLACEHOLDER"* ]]; then
-      # Template has a real value (you updated the script intentionally) → always write it
-      if [[ "$current_value" != "$template_value" ]]; then
-        sed -i.bak -E "s|^${key}=.*|${key}=${template_value}|" "$ENV_FILE"
-        echo "  ↻  UPDATED    ${key}  (script value → ${template_value})"
-      else
-        echo "  ✓  SAME       ${key}=${current_value}"
-      fi
-    elif [[ -n "$current_value" && "$current_value" != *"PLACEHOLDER"* ]]; then
-      # Template is a placeholder, but .env already has a real value → PRESERVE
+    if [[ -n "$current_value" ]]; then
+      # Non-empty value exists → always preserve it, regardless of what default says
       echo "  ✓  PRESERVED  ${key}=${current_value}"
     else
-      # Template is a placeholder and .env has nothing real → write template
-      sed -i.bak -E "s|^${key}=.*|${key}=${template_value}|" "$ENV_FILE"
-      echo "  ↻  OVERWRITE  ${key}  (was empty/placeholder → ${template_value})"
+      # Key exists but is empty → fill with default
+      sed -i.bak -E "s|^${key}=.*|${key}=${default_value}|" "$ENV_FILE"
+      echo "  ↻  FILLED     ${key}  (was empty → ${default_value})"
     fi
   else
-    # Key not found → append template value
-    echo "${key}=${template_value}" >> "$ENV_FILE"
-    echo "  +  ADDED      ${key}=${template_value}"
+    # Key not found → append default value
+    echo "${key}=${default_value}" >> "$ENV_FILE"
+    echo "  +  ADDED      ${key}=${default_value}"
   fi
 done
 
