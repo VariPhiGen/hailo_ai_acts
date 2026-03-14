@@ -217,14 +217,14 @@ class user_app_callback_class(app_callback_class):
         """Background thread that periodically calls YOLOE text_prompt."""
         # Basic safety: don't run if there are no YOLOE activities configured
         if not self.yoloe_activities or not self.yoloe_condition_labels:
+            print("⚠️  [YOLOE] Thread exiting — no activities or no condition labels configured")
             return
 
         _debug = os.environ.get("DEBUG_MODE") == "1"
         # Minimum tick of 1 second
         base_sleep = 1.0
 
-        if _debug:
-            print(f"🔍 [YOLOE] Scheduler started | Activities: {list(self.yoloe_activities.keys())} | Labels: {self.yoloe_condition_labels}")
+        print(f"🚀 [YOLOE] Scheduler started | Activities: {list(self.yoloe_activities.keys())} | Labels: {self.yoloe_condition_labels}")
 
         while self.yoloe_running:
             now_ts = time.time()
@@ -254,7 +254,7 @@ class user_app_callback_class(app_callback_class):
 
                 if image is None:
                     # No frame at all yet — pipeline hasn't started
-                    print("⚠️  [YOLOE] Waiting for first frame...")
+                    print("⏳ [YOLOE] Waiting for first frame from pipeline...")
                     time.sleep(base_sleep)
                     continue
 
@@ -269,8 +269,9 @@ class user_app_callback_class(app_callback_class):
                         act for act in self.yoloe_activities
                         if self._yoloe_should_run_for_activity(act, now_ts)
                     ]
+                    print(f"🔍 [YOLOE] Calling API | Activities: {due_activities} | Prompts: {self.yoloe_condition_labels}")
                     if _debug:
-                        print(f"🔍 [YOLOE] Calling API | Due activities: {due_activities} | Prompts: {self.yoloe_condition_labels}")
+                        pass  # already printed above
 
                     # Call centralized YOLOE API with unique condition labels
                     t_start = time.time()
@@ -284,13 +285,10 @@ class user_app_callback_class(app_callback_class):
                     # Store result and timestamp
                     if api_result is not None:
                         n_detections = len(api_result.get("prompt", []))
-                        if _debug:
-                            print(f"✅ [YOLOE] API SUCCESS in {t_elapsed:.2f}s | Detections: {n_detections}")
-                            if n_detections > 0:
-                                for lbl, conf in zip(api_result.get("prompt", []), api_result.get("confidence", [])):
-                                    print(f"   └─ {lbl}: {conf:.2f}")
-                            else:
-                                print(f"   └─ No objects detected for prompts: {self.yoloe_condition_labels}")
+                        print(f"✅ [YOLOE] API SUCCESS in {t_elapsed:.2f}s | Detections: {n_detections}")
+                        if _debug and n_detections > 0:
+                            for lbl, conf in zip(api_result.get("prompt", []), api_result.get("confidence", [])):
+                                print(f"   └─ {lbl}: {conf:.2f}")
 
                         with self.yoloe_lock:
                             self.yoloe_results = {
