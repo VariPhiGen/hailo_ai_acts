@@ -36,7 +36,7 @@ class PPE:
                         self.relay = None
                 else:
                     self.relay=self.parent.relay_handler
-                    self.switch_relay=parameters["switch_relay"]
+                    self.switch_relay=parameters.get("switch_relay", [1, 2])
             except Exception as e:
                 print(f"⚠️ Relay initialization failed: {e}. Continuing without relay control.")
                 self.relay = None

@@ -26,7 +26,7 @@ class UnsafeZone:
                         print("⚠️ Relay device not available. Continuing without relay control.")
                         self.relay = None
                 self.relay=self.parent.relay_handler
-                self.switch_relay=parameters["switch_relay"]
+                self.switch_relay=parameters.get("switch_relay", [1, 2])
             except Exception:
                 self.relay = None
         # Initiating Zone wise
