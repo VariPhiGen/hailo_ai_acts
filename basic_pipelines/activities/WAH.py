@@ -110,6 +110,11 @@ class WAH:
                             # Deep-copy inside the lock to prevent concurrent mutation by
                             # the YOLOE background thread overwriting the dict mid-iteration.
                             yoloe_result_data = copy.deepcopy(yoloe_results["result"])
+                            # Grab the scale params stored alongside the result so we
+                            # can convert model-image polygon coords → original pixel space
+                            yoloe_scale_ratio = yoloe_results.get("ratio")
+                            yoloe_scale_padx  = yoloe_results.get("padx")
+                            yoloe_scale_pady  = yoloe_results.get("pady")
             
             person_indices = [i for i, cls in enumerate(self.parent.classes) if cls == "person"]
             wah_indices = [i for i, cls in enumerate(self.parent.classes) if cls in wah_objects.keys()]
@@ -152,8 +157,21 @@ class WAH:
                         # Get polygon for this detection
                         if i < len(yoloe_polygons) and yoloe_polygons[i]:
                             try:
-                                # Convert polygon from [[x1,y1], [x2,y2], ...] to Shapely Polygon
-                                polygon_points = [(float(pt[0]), float(pt[1])) for pt in yoloe_polygons[i]]
+                                # Convert polygon from model-image space → original pixel space
+                                # using the inverse of the letterbox transform:
+                                #   original_x = (model_x - padx) / ratio
+                                #   original_y = (model_y - pady) / ratio
+                                if yoloe_scale_ratio and yoloe_scale_ratio > 0:
+                                    polygon_points = [
+                                        (
+                                            (float(pt[0]) - yoloe_scale_padx) / yoloe_scale_ratio,
+                                            (float(pt[1]) - yoloe_scale_pady) / yoloe_scale_ratio,
+                                        )
+                                        for pt in yoloe_polygons[i]
+                                    ]
+                                else:
+                                    # Fallback: use raw coordinates (e.g. full-res image was sent)
+                                    polygon_points = [(float(pt[0]), float(pt[1])) for pt in yoloe_polygons[i]]
                                 if len(polygon_points) >= 3:  # Need at least 3 points for a valid polygon
                                     condition_poly = Polygon(polygon_points)
                                     # Check if person is inside or intersects the condition_label polygon

@@ -230,82 +230,97 @@ class user_app_callback_class(app_callback_class):
             now_ts = time.time()
 
             try:
-                # Take a snapshot of current full-resolution frame for YOLOE.
-                # IMPORTANT: use self.image (original pixel space), NOT self.model_image
-                # (letterboxed). This ensures YOLOE polygon coordinates align with the
-                # detection_boxes which are already de-letterboxed to original space.
+                # Use model_image (letterboxed, smaller) for YOLOE to reduce payload size.
+                # We also capture the current ratio/padx/pady so that WAH.py can convert
+                # the returned polygon coords back from model space → original pixel space.
                 image = None
+                scale_ratio = None
+                scale_padx = None
+                scale_pady = None
                 with self.yoloe_lock:
-                    image = self.image.copy() if self.image is not None else None
+                    if self.model_image is not None:
+                        image = self.model_image.copy()
+                        scale_ratio = self.ratio
+                        scale_padx  = self.padx
+                        scale_pady  = self.pady
 
-                if image is not None:
-                    # Decide if at least one activity needs YOLOE at this tick
-                    should_run_any = any(
-                        self._yoloe_should_run_for_activity(act_name, now_ts)
-                        for act_name in self.yoloe_activities.keys()
-                    )
+                # Guard: only proceed if scale params are ready (set after first frame parse)
+                if image is None or scale_ratio is None or scale_padx is None or scale_pady is None:
+                    time.sleep(base_sleep)
+                    continue
 
-                    if should_run_any:
-                        due_activities = [
-                            act for act in self.yoloe_activities
-                            if self._yoloe_should_run_for_activity(act, now_ts)
-                        ]
+                # Decide if at least one activity needs YOLOE at this tick
+                should_run_any = any(
+                    self._yoloe_should_run_for_activity(act_name, now_ts)
+                    for act_name in self.yoloe_activities.keys()
+                )
+
+                if should_run_any:
+                    due_activities = [
+                        act for act in self.yoloe_activities
+                        if self._yoloe_should_run_for_activity(act, now_ts)
+                    ]
+                    if _debug:
+                        print(f"🔍 [YOLOE] Calling API | Due activities: {due_activities} | Prompts: {self.yoloe_condition_labels}")
+
+                    # Call centralized YOLOE API with unique condition labels
+                    t_start = time.time()
+                    try:
+                        api_result = text_prompt(image, self.yoloe_condition_labels)
+                    except Exception as e:
+                        print(f"❌ [YOLOE] API call FAILED: {e}")
+                        api_result = None
+                    t_elapsed = time.time() - t_start
+
+                    # Store result and timestamp
+                    if api_result is not None:
+                        n_detections = len(api_result.get("prompt", []))
                         if _debug:
-                            print(f"🔍 [YOLOE] Calling API | Due activities: {due_activities} | Prompts: {self.yoloe_condition_labels}")
+                            print(f"✅ [YOLOE] API SUCCESS in {t_elapsed:.2f}s | Detections: {n_detections}")
+                            if n_detections > 0:
+                                for lbl, conf in zip(api_result.get("prompt", []), api_result.get("confidence", [])):
+                                    print(f"   └─ {lbl}: {conf:.2f}")
+                            else:
+                                print(f"   └─ No objects detected for prompts: {self.yoloe_condition_labels}")
 
-                        # Call centralized YOLOE API with unique condition labels
-                        t_start = time.time()
-                        try:
-                            api_result = text_prompt(image, self.yoloe_condition_labels)
-                        except Exception as e:
-                            print(f"❌ [YOLOE] API call FAILED: {e}")
-                            api_result = None
-                        t_elapsed = time.time() - t_start
+                        with self.yoloe_lock:
+                            self.yoloe_results = {
+                                "result": api_result,
+                                "last_run": now_ts,
+                                # Store the scale parameters so activities can
+                                # convert model-space coords → original pixel space:
+                                #   original_x = (model_x - padx) / ratio
+                                "ratio": scale_ratio,
+                                "padx":  scale_padx,
+                                "pady":  scale_pady,
+                            }
+                            self.yoloe_last_run_global = now_ts
 
-                        # Store result and timestamp
-                        if api_result is not None:
-                            n_detections = len(api_result.get("prompt", []))
-                            if _debug:
-                                print(f"✅ [YOLOE] API SUCCESS in {t_elapsed:.2f}s | Detections: {n_detections}")
-                                if n_detections > 0:
-                                    for lbl, conf in zip(api_result.get("prompt", []), api_result.get("confidence", [])):
-                                        print(f"   └─ {lbl}: {conf:.2f}")
-                                else:
-                                    print(f"   └─ No objects detected for prompts: {self.yoloe_condition_labels}")
+                            # Update next_run_ts for all activities that were due
+                            for act_name, info in self.yoloe_activities.items():
+                                if self._yoloe_should_run_for_activity(act_name, now_ts):
+                                    interval = info.get("interval", 0)
+                                    if interval > 0:
+                                        next_ts = info.get("next_run_ts", now_ts)
+                                        while next_ts <= now_ts:
+                                            next_ts += interval
+                                        info["next_run_ts"] = next_ts
+                                        if _debug:
+                                            print(f"🔍 [YOLOE] Next run for '{act_name}' in {int(next_ts - now_ts)}s")
+                    else:
+                        if _debug:
+                            print(f"⚠️  [YOLOE] API returned None after {t_elapsed:.2f}s — result discarded")
 
-                            with self.yoloe_lock:
-                                self.yoloe_results = {
-                                    "result": api_result,
-                                    "last_run": now_ts,
-                                }
-                                self.yoloe_last_run_global = now_ts
-
-                                # Update next_run_ts for all activities that were due
-                                for act_name, info in self.yoloe_activities.items():
-                                    if self._yoloe_should_run_for_activity(act_name, now_ts):
-                                        interval = info.get("interval", 0)
-                                        if interval > 0:
-                                            next_ts = info.get("next_run_ts", now_ts)
-                                            # Move next_run_ts forward in steps of interval until it's in the future
-                                            while next_ts <= now_ts:
-                                                next_ts += interval
-                                            info["next_run_ts"] = next_ts
-                                            if _debug:
-                                                print(f"🔍 [YOLOE] Next run for '{act_name}' in {int(next_ts - now_ts)}s")
-                        else:
-                            if _debug:
-                                print(f"⚠️  [YOLOE] API returned None after {t_elapsed:.2f}s — result discarded")
-
-                    elif _debug:
-                        # Show countdown to next call for debugging
-                        soonest = min(
-                            (info["next_run_ts"] for info in self.yoloe_activities.values()),
-                            default=now_ts
-                        )
-                        remaining = max(0, int(soonest - now_ts))
-                        # Only print every 30 ticks to avoid spamming
-                        if int(now_ts) % 30 == 0:
-                            print(f"🔍 [YOLOE] Idle — next call in ~{remaining}s")
+                elif _debug:
+                    # Show countdown to next call for debugging
+                    soonest = min(
+                        (info["next_run_ts"] for info in self.yoloe_activities.values()),
+                        default=now_ts
+                    )
+                    remaining = max(0, int(soonest - now_ts))
+                    # Only print every 30 ticks to avoid spamming
+                    if int(now_ts) % 30 == 0:
+                        print(f"🔍 [YOLOE] Idle — next call in ~{remaining}s")
 
                 # Sleep until next tick
                 time.sleep(base_sleep)
