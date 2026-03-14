@@ -78,6 +78,8 @@ class user_app_callback_class(app_callback_class):
         self.classes = None
         self.tracker_ids = None
         self.anchor_points_original = None
+        # Required by Hailo GStreamer app base class
+        self.pose_hef_path = None
         self.detection_score = None
         self.ist_timezone = pytz.timezone('Asia/Kolkata')
         self.timezone_str = 'Asia/Kolkata'  # overwritten from config at startup
@@ -217,8 +219,12 @@ class user_app_callback_class(app_callback_class):
         if not self.yoloe_activities or not self.yoloe_condition_labels:
             return
 
+        _debug = os.environ.get("DEBUG_MODE") == "1"
         # Minimum tick of 1 second
         base_sleep = 1.0
+
+        if _debug:
+            print(f"🔍 [YOLOE] Scheduler started | Activities: {list(self.yoloe_activities.keys())} | Labels: {self.yoloe_condition_labels}")
 
         while self.yoloe_running:
             now_ts = time.time()
@@ -240,15 +246,33 @@ class user_app_callback_class(app_callback_class):
                     )
 
                     if should_run_any:
+                        due_activities = [
+                            act for act in self.yoloe_activities
+                            if self._yoloe_should_run_for_activity(act, now_ts)
+                        ]
+                        if _debug:
+                            print(f"🔍 [YOLOE] Calling API | Due activities: {due_activities} | Prompts: {self.yoloe_condition_labels}")
+
                         # Call centralized YOLOE API with unique condition labels
+                        t_start = time.time()
                         try:
                             api_result = text_prompt(image, self.yoloe_condition_labels)
                         except Exception as e:
-                            print(f"DEBUG: YOLOE text_prompt failed: {e}")
+                            print(f"❌ [YOLOE] API call FAILED: {e}")
                             api_result = None
+                        t_elapsed = time.time() - t_start
 
                         # Store result and timestamp
                         if api_result is not None:
+                            n_detections = len(api_result.get("prompt", []))
+                            if _debug:
+                                print(f"✅ [YOLOE] API SUCCESS in {t_elapsed:.2f}s | Detections: {n_detections}")
+                                if n_detections > 0:
+                                    for lbl, conf in zip(api_result.get("prompt", []), api_result.get("confidence", [])):
+                                        print(f"   └─ {lbl}: {conf:.2f}")
+                                else:
+                                    print(f"   └─ No objects detected for prompts: {self.yoloe_condition_labels}")
+
                             with self.yoloe_lock:
                                 self.yoloe_results = {
                                     "result": api_result,
@@ -266,12 +290,28 @@ class user_app_callback_class(app_callback_class):
                                             while next_ts <= now_ts:
                                                 next_ts += interval
                                             info["next_run_ts"] = next_ts
+                                            if _debug:
+                                                print(f"🔍 [YOLOE] Next run for '{act_name}' in {int(next_ts - now_ts)}s")
+                        else:
+                            if _debug:
+                                print(f"⚠️  [YOLOE] API returned None after {t_elapsed:.2f}s — result discarded")
+
+                    elif _debug:
+                        # Show countdown to next call for debugging
+                        soonest = min(
+                            (info["next_run_ts"] for info in self.yoloe_activities.values()),
+                            default=now_ts
+                        )
+                        remaining = max(0, int(soonest - now_ts))
+                        # Only print every 30 ticks to avoid spamming
+                        if int(now_ts) % 30 == 0:
+                            print(f"🔍 [YOLOE] Idle — next call in ~{remaining}s")
 
                 # Sleep until next tick
                 time.sleep(base_sleep)
             except Exception as e:
                 # Catch-all to avoid killing the thread on unexpected errors
-                print(f"DEBUG: YOLOE thread loop error: {e}")
+                print(f"❌ [YOLOE] Thread loop error: {e}")
                 time.sleep(base_sleep)
         
     def calibration_check(self,flag=False):

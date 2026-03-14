@@ -118,9 +118,15 @@ def text_prompt(
         "conf": str(threshold),
     }
 
+    _debug = os.environ.get("DEBUG_MODE") == "1"
+
     try:
+        if _debug:
+            print(f"🔍 [YOLOE] POST {url} | prompts={', '.join(prompt)} | conf={threshold} | image={image.shape}")
         response = requests.post(url, files=files, data=data, timeout=timeout)
         response.raise_for_status()
+        if _debug:
+            print(f"✅ [YOLOE] HTTP {response.status_code} in {response.elapsed.total_seconds():.2f}s")
     except requests.RequestException as exc:
         raise RuntimeError(f"Failed to call YOLOE API at {url}: {exc}") from exc
 
