@@ -89,7 +89,8 @@ print_status "▶  Starting detection.py in debug mode..."
 echo ""
 
 # Run once — no retry loop so the full traceback is immediately visible
-python basic_pipelines/detection.py \
+# -u = unbuffered stdout/stderr so every print() appears immediately through the tee pipe
+PYTHONUNBUFFERED=1 python -u basic_pipelines/detection.py \
     --i "$CAMERA_INPUT" \
     --disable-sync \
     2>&1 | tee /tmp/hailo_debug_$(date '+%Y%m%d_%H%M%S').log
