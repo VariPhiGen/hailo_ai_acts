@@ -55,19 +55,27 @@ for entry in "${TEMPLATE_LINES[@]}"; do
   template_value="${entry#*=}"
 
   if grep -qE "^${key}=" "$ENV_FILE"; then
-    # Key exists — extract current value (everything after first '=')
+    # Key exists — extract current value
     current_value="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d'=' -f2-)"
 
-    if [[ -z "$current_value" || "$current_value" == *"PLACEHOLDER"* ]]; then
-      # Empty or placeholder → overwrite
+    if [[ "$template_value" != *"PLACEHOLDER"* ]]; then
+      # Template has a real value (you updated the script intentionally) → always write it
+      if [[ "$current_value" != "$template_value" ]]; then
+        sed -i.bak -E "s|^${key}=.*|${key}=${template_value}|" "$ENV_FILE"
+        echo "  ↻  UPDATED    ${key}  (script value → ${template_value})"
+      else
+        echo "  ✓  SAME       ${key}=${current_value}"
+      fi
+    elif [[ -n "$current_value" && "$current_value" != *"PLACEHOLDER"* ]]; then
+      # Template is a placeholder, but .env already has a real value → PRESERVE
+      echo "  ✓  PRESERVED  ${key}=${current_value}"
+    else
+      # Template is a placeholder and .env has nothing real → write template
       sed -i.bak -E "s|^${key}=.*|${key}=${template_value}|" "$ENV_FILE"
       echo "  ↻  OVERWRITE  ${key}  (was empty/placeholder → ${template_value})"
-    else
-      # Real value — preserve
-      echo "  ✓  PRESERVED  ${key}=${current_value}"
     fi
   else
-    # Missing — append
+    # Key not found → append template value
     echo "${key}=${template_value}" >> "$ENV_FILE"
     echo "  +  ADDED      ${key}=${template_value}"
   fi
