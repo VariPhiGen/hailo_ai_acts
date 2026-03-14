@@ -186,7 +186,7 @@ class user_app_callback_class(app_callback_class):
                 "condition_labels": condition_labels,
                 "interval": interval,
                 "confidence": confidence,
-                "next_run_ts": now_ts + interval,  # first run after its own interval
+                "next_run_ts": now_ts + 10,  # first run 10s after startup, then every interval
             }
             self.yoloe_intervals.append(interval)
             self.yoloe_condition_labels.extend(condition_labels)
