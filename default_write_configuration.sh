@@ -137,14 +137,14 @@ cat > "$TARGET" <<EOF
         "frame_accuracy": 100,
         "wah_confidence_threshold": 0.7,
         "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
-        "condition_label":["scaffolding","bricks"],
+        "condition_label":["scaffolding"],
         "missing_subcategory":"No Harness or Hooks",
         "no_zone":1,
         "relay":0,
         "switch_relay":[1,2],
         "last_check_time":0,
         "yoloe":1,
-        "yoloe_interval":300,
+        "yoloe_interval":60,
         "yoloe_confidence":0.1,
         "yoloe_max_stale_age":120
       }
