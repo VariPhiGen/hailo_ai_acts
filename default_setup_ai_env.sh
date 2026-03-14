@@ -55,17 +55,9 @@ for entry in "${TEMPLATE_LINES[@]}"; do
   default_value="${entry#*=}"
 
   if grep -qE "^${key}=" "$ENV_FILE"; then
-    # Key exists — extract current value
+    # Key exists (even if empty) → preserve, never touch it
     current_value="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d'=' -f2-)"
-
-    if [[ -n "$current_value" ]]; then
-      # Non-empty value exists → always preserve it, regardless of what default says
-      echo "  ✓  PRESERVED  ${key}=${current_value}"
-    else
-      # Key exists but is empty → fill with default
-      sed -i.bak -E "s|^${key}=.*|${key}=${default_value}|" "$ENV_FILE"
-      echo "  ↻  FILLED     ${key}  (was empty → ${default_value})"
-    fi
+    echo "  ✓  PRESERVED  ${key}=${current_value}"
   else
     # Key not found → append default value
     echo "${key}=${default_value}" >> "$ENV_FILE"
