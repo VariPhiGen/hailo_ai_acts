@@ -36,7 +36,7 @@ class UnauthorisedArea:
             )
             
             condition_labels = condition_label if isinstance(condition_label, list) else [condition_label] if condition_label_enabled else []
-            yoloe_confidence_threshold = self.parameters.get("yoloe_confidence", 0.0)
+            yoloe_confidence_threshold = self.parameters.get("yoloe_confidence", 0.1)
             
             # Safely get YOLOE results from the central dictionary
             yoloe_result_data = None

@@ -321,97 +321,217 @@ class user_app_callback_class(app_callback_class):
                 print(f"❌ Failed to replace message: {e}")
                 # Silently drop if all else fails
                 
-    # ----------------------------- YOLOE CENTRAL CONTROL ---------------------------------
-    def _init_yoloe_from_config(self, config):
-        self.yoloe_activities = {}
+# ----------------------------- YOLOE CENTRAL CONTROL ---------------------------------
+# ============================================================================
+#  METHOD: _init_yoloe_from_config
+# ============================================================================
+ 
+    def _init_yoloe_from_config(self, config: dict):
+        """
+        Reads YOLOE config for all active activities and populates
+        self.yoloe_activities.
+     
+        No network calls at startup — the server does not need to be online here.
+        The circuit breaker in yoloe_handler.py handles offline gracefully.
+        """
+        self.yoloe_activities       = {}
         self.yoloe_condition_labels = []
-        self.yoloe_intervals = []
-
-        activities_data = config.get("activities_data", {})
-        active_activities = config.get("active_activities", [])
+        self.yoloe_intervals        = []
         now_ts = time.time()
-
+     
+        activities_data   = config.get("activities_data",   {})
+        active_activities = config.get("active_activities", [])
+     
         for activity_name, details in activities_data.items():
             if activity_name not in active_activities:
                 continue
-                
+     
             params = details.get("parameters", {})
             if not params.get("yoloe", 0):
                 continue
-
+     
+            # ── Mode ──────────────────────────────────────────────────────────── #
+            mode = str(params.get("yoloe_mode", "text")).lower().strip()
+            if mode not in ("text", "visual", "both"):
+                logging.warning(
+                    f"[YOLOE] '{activity_name}': unknown yoloe_mode='{mode}' "
+                    f"→ defaulting to 'text'"
+                )
+                mode = "text"
+     
+            # ── Text labels ────────────────────────────────────────────────────── #
             condition_labels = params.get("condition_label", [])
             if not isinstance(condition_labels, list):
-                continue
-
-            interval = int(params.get("yoloe_interval", 0) or 0)
-            if interval <= 0:
-                continue
-
+                condition_labels = []
+     
+            if mode in ("text", "both") and not condition_labels:
+                logging.warning(
+                    f"[YOLOE] '{activity_name}': mode='{mode}' but no "
+                    f"condition_label provided"
+                )
+                if mode == "text":
+                    continue          # text-only with no labels = nothing to do
+                mode = "visual"       # degrade both → visual
+     
+            # ── Interval / confidence ─────────────────────────────────────────── #
+            interval   = int(params.get("yoloe_interval",   0) or 0)
             confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
-
+            if interval <= 0:
+                logging.warning(
+                    f"[YOLOE] '{activity_name}': yoloe_interval={interval} ≤ 0 — skipping"
+                )
+                continue
+     
             self.yoloe_activities[activity_name] = {
+                "mode":             mode,
                 "condition_labels": condition_labels,
-                "interval": interval,
-                "confidence": confidence,
-                "next_run_ts": now_ts + interval,
+                "activity_id":      activity_name,   # key for visual_prompts.json lookup
+                "interval":         interval,
+                "confidence":       confidence,
+                "next_run_ts":      now_ts + interval,
             }
             self.yoloe_intervals.append(interval)
-            self.yoloe_condition_labels.extend(condition_labels)
-
-        self.yoloe_condition_labels = sorted(list(set(self.yoloe_condition_labels)))
+     
+            if mode in ("text", "both"):
+                self.yoloe_condition_labels.extend(condition_labels)
+     
+        # Deduplicate text labels
+        self.yoloe_condition_labels = sorted(set(self.yoloe_condition_labels))
+     
         if self.yoloe_intervals:
-            self.yoloe_start_ts = now_ts
+            self.yoloe_start_ts        = now_ts
             self.yoloe_last_run_global = 0.0
-
-    def _yoloe_should_run_for_activity(self, activity_name, now_ts):
+     
+        if self.yoloe_activities:
+            summary = {a: i["mode"] for a, i in self.yoloe_activities.items()}
+            logging.info(f"[YOLOE] Init complete: {summary}")
+            logging.info(f"[YOLOE] Text labels: {self.yoloe_condition_labels}")
+        else:
+            logging.info("[YOLOE] No activities configured.")
+ 
+ 
+# ============================================================================
+#  METHOD: _yoloe_should_run_for_activity
+# ============================================================================
+ 
+    def _yoloe_should_run_for_activity(self, activity_name: str, now_ts: float) -> bool:
         info = self.yoloe_activities.get(activity_name)
-        if not info: return False
+        if not info:
+            return False
         interval = info.get("interval", 0)
-        if interval <= 0: return False
+        if interval <= 0:
+            return False
         return now_ts >= info.get("next_run_ts", 0.0)
-
+ 
+ 
+# ============================================================================
+#  METHOD: _yoloe_thread_loop
+# ============================================================================
+ 
     def _yoloe_thread_loop(self):
-        if not self.yoloe_activities or not self.yoloe_condition_labels: return
+        """
+        Daemon thread: checks each activity's interval, grabs the latest Hailo
+        frame, routes to text / visual / both via yoloe_handler, stores result.
+     
+        Mode routing:
+          text   → yoloe_handler.text_prompt(frame, labels)
+          visual → yoloe_handler.visual_prompt(frame, activity_id)
+          both   → yoloe_handler.both_prompt(frame, labels, activity_id)
+        """
+        if not self.yoloe_activities:
+            return
+     
         base_sleep = 1.0
-
+     
         while self.yoloe_running:
             now_ts = time.time()
             try:
+                # Snapshot the latest Hailo frame
                 image = None
                 with self.yoloe_lock:
                     image = self.model_image.copy() if self.model_image is not None else None
-
-                if image is not None:
-                    should_run_any = any(
-                        self._yoloe_should_run_for_activity(act_name, now_ts)
-                        for act_name in self.yoloe_activities.keys()
-                    )
-
-                    if should_run_any and self.yoloe_handler is not None:
-                        # Call your updated YOLOEHandler instance method
-                        try:
-                            api_result = self.yoloe_handler.text_prompt(image, self.yoloe_condition_labels)
-                        except Exception as e:
-                            print(f"DEBUG: YOLOE text_prompt failed: {e}")
-                            api_result = None
-
-                        if api_result is not None:
-                            with self.yoloe_lock:
-                                self.yoloe_results = {"result": api_result, "last_run": now_ts}
-                                self.yoloe_last_run_global = now_ts
-
-                                for act_name, info in self.yoloe_activities.items():
-                                    if self._yoloe_should_run_for_activity(act_name, now_ts):
-                                        interval = info.get("interval", 0)
-                                        if interval > 0:
-                                            next_ts = info.get("next_run_ts", now_ts)
-                                            while next_ts <= now_ts: next_ts += interval
-                                            info["next_run_ts"] = next_ts
-
-                time.sleep(base_sleep)
+     
+                if image is None:
+                    time.sleep(base_sleep)
+                    continue
+     
+                for act_name, info in list(self.yoloe_activities.items()):
+                    if not self._yoloe_should_run_for_activity(act_name, now_ts):
+                        continue
+     
+                    mode   = info["mode"]
+                    conf   = info.get("confidence", 0.05)
+                    act_id = info["activity_id"]
+                    labels = info.get("condition_labels", [])
+     
+                    # ── Route to the correct handler method ────────────────────── #
+                    api_result = None
+                    try:
+                        if mode == "text":
+                            api_result = self.yoloe_handler.text_prompt(
+                                image, labels, conf=conf
+                            )
+                        elif mode == "visual":
+                            api_result = self.yoloe_handler.visual_prompt(
+                                image, act_id, conf=conf
+                            )
+                        elif mode == "both":
+                            api_result = self.yoloe_handler.both_prompt(
+                                image, labels, act_id, conf=conf
+                            )
+                    except Exception as e:
+                        logging.error(f"[YOLOE] '{act_name}' {mode} call failed: {e}")
+     
+                    # ── Store per-activity result ──────────────────────────────── #
+                    if api_result is not None:
+                        with self.yoloe_lock:
+                            self.yoloe_results[act_name] = {
+                                "result":   api_result,
+                                "last_run": now_ts,
+                            }
+                            self.yoloe_last_run_global = now_ts
+     
+                    # ── Advance next_run_ts ────────────────────────────────────── #
+                    with self.yoloe_lock:
+                        interval = info.get("interval", 0)
+                        if interval > 0:
+                            next_ts = info.get("next_run_ts", now_ts)
+                            while next_ts <= now_ts:
+                                next_ts += interval
+                            info["next_run_ts"] = next_ts
+     
             except Exception as e:
-                print(f"DEBUG: YOLOE thread loop error: {e}")
-                time.sleep(base_sleep)
+                logging.error(f"[YOLOE] Thread loop error: {e}")
+     
+            time.sleep(base_sleep)
+ 
+ 
+# ============================================================================
+#  METHOD: get_yoloe_result
+# ============================================================================
+ 
+    def get_yoloe_result(self, activity_name: str) -> dict | None:
+        """
+        Thread-safe accessor for activity modules.
+     
+        Returns:
+            {
+              "result":   <server JSON with detections, image_base64, mode, ...>
+              "last_run": <unix timestamp>
+            }
+            or None if no result yet for this activity.
+     
+        Usage in an activity module:
+            data = user_data.get_yoloe_result("ppe_detection")
+            if data:
+                for det in data["result"].get("detections", []):
+                    label  = det["prompt"]     # e.g. "hard_hat"
+                    conf   = det["confidence"]
+                    bbox   = det["bounding_box"]
+                    source = det.get("source", "")  # "text" / "visual" / ""
+        """
+        with self.yoloe_lock:
+            return self.yoloe_results.get(activity_name)
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
@@ -976,13 +1096,16 @@ if __name__ == "__main__":
         # user_data.yoloe_handler.set_results_queue(results_events_queue) 
         
         user_data._init_yoloe_from_config(config)
-        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
+        if user_data.yoloe_activities:
             user_data.yoloe_running = True
             user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
             user_data.yoloe_thread.start()
-            print(f"✅ YOLOE centralized scheduler started with activities: {list(user_data.yoloe_activities.keys())}")
+            modes = {a: i["mode"] for a, i in user_data.yoloe_activities.items()}
+            print(f"✅ YOLOE scheduler started: {modes}")
+        else:
+            print("ℹ️ YOLOE: no activities configured.")
     except Exception as e:
-        print(f"❌ Failed to initialize YOLOE centralized control: {e}")
+        print(f"❌ Failed to initialize YOLOE: {e}")
         
     # Snapshot if configured
     if "camera_details" in config:
