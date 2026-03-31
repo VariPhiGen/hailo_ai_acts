@@ -44,6 +44,9 @@ from hailo_apps.hailo_app_python.apps.detection.detection_pipeline import GStrea
 # yoloe handler
 from basic_pipelines.yoloe_handler import YOLOEHandler
 
+# anpr handler
+from basic_pipelines.anpr_handler import ANPRHandler
+
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
 # -----------------------------------------------------------------------------------------------
@@ -155,6 +158,9 @@ class user_app_callback_class(app_callback_class):
         self.yoloe_lock = Lock()
         self.yoloe_thread = None
         self.yoloe_running = False
+        
+        # ANPR Handler
+        self.anpr_handler = None
         
     def calibration_check(self,flag=False):
         """
