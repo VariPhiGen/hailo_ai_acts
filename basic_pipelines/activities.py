@@ -313,6 +313,15 @@ class AnalyticsEngine:
                 }
                 self.active_methods.append(self.unattended_area)
                 
+            # yoloe test for text and visual and both
+            elif activity == "YoloeTest":
+                self.running_data["YoloeTest"] = {
+                    "person_entry_times": {}
+                }
+                self.violation_id_data["YoloeTest"] = []
+                self.active_methods.append(self.yoloe_test)
+                print("✅ YoloeTest registered.")
+                
                 
 # ---------------------- Activities fucntions ---------------------------------------
     # ─────────────────────────────────────────────────────────────────────────
@@ -2668,6 +2677,96 @@ class AnalyticsEngine:
 
                 # set 1-hour cooldown after alert
                 zone_state["cooldown_until"] = current_time + 3600.0
+
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # YOLOE TEST LOGIC
+    # ─────────────────────────────────────────────────────────────────────────
+    def yoloe_test(self):
+        params = self.parameters_data["YoloeTest"]
+        tz     = self.timezones["YoloeTest"]
+
+        if not activity_active_time(params, tz):
+            return
+
+        if time.time() - params["last_check_time"] <= 1:
+            return
+        params["last_check_time"] = time.time()
+
+        yoloe_confidence_threshold = params.get("yoloe_confidence", 0.0)
+        condition_labels           = params.get("condition_label", [])
+        if isinstance(condition_labels, str):
+            condition_labels = [condition_labels]
+
+        print("\n[YOLOE TEST] ──────────────────────────────────────────")
+
+        # ── 1. Hailo detections (independent) ────────────────────────────────── #
+        offender_indices = [
+            i for i, cls in enumerate(self.parent.classes)
+            if cls in params["subcategory_mapping"]
+        ]
+
+        if offender_indices:
+            print(f"[YOLOE TEST] Hailo — {len(offender_indices)} person(s):")
+            for idx in offender_indices:
+                print(
+                    f"   • tracker_id={self.parent.tracker_ids[idx]}  "
+                    f"bbox={[round(v, 1) for v in self.parent.detection_boxes[idx]]}"
+                )
+        else:
+            print("[YOLOE TEST] Hailo — no persons detected.")
+
+        # ── 2. YOLOE detections (independent) ────────────────────────────────── #
+        yoloe_result_data = None
+        with self.parent.yoloe_lock:
+            activity_data = self.parent.yoloe_results.get("YoloeTest")
+            if activity_data and activity_data.get("result"):
+                yoloe_result_data = activity_data["result"]
+
+        if yoloe_result_data is None:
+            print("[YOLOE TEST] YOLOE — waiting for first result...")
+            print("[YOLOE TEST] ──────────────────────────────────────────")
+            return
+
+        text_dets   = [d for d in yoloe_result_data.get("detections", [])
+                       if d.get("source", "text") == "text"]
+        visual_dets = [d for d in yoloe_result_data.get("detections", [])
+                       if d.get("source") == "visual"]
+
+        # text pass
+        valid_text = [d for d in text_dets
+                      if d.get("prompt") in condition_labels
+                      and d.get("confidence", 0) >= yoloe_confidence_threshold]
+        if valid_text:
+            print(f"[YOLOE TEST] YOLOE text — {len(valid_text)} detection(s):")
+            for det in valid_text:
+                print(
+                    f"   • {det['prompt']}  conf={det['confidence']:.2f}  "
+                    f"bbox={[round(v,1) for v in det['bounding_box']]}  "
+                    f"polygon={'yes' if len(det.get('polygon',[])) >= 3 else 'no'}"
+                )
+        else:
+            print("[YOLOE TEST] YOLOE text — no detections.")
+
+        # visual pass
+        valid_visual = [d for d in visual_dets
+                        if d.get("confidence", 0) >= yoloe_confidence_threshold]
+        if valid_visual:
+            print(f"[YOLOE TEST] YOLOE visual — {len(valid_visual)} detection(s):")
+            for det in valid_visual:
+                print(
+                    f"   • {det['prompt']}  conf={det['confidence']:.2f}  "
+                    f"bbox={[round(v,1) for v in det['bounding_box']]}  "
+                    f"polygon={'yes' if len(det.get('polygon',[])) >= 3 else 'no'}"
+                )
+        else:
+            print("[YOLOE TEST] YOLOE visual — no detections.")
+
+        print(
+            f"[YOLOE TEST] Summary — hailo_persons={len(offender_indices)}  "
+            f"text={len(valid_text)}  visual={len(valid_visual)}"
+        )
+        print("[YOLOE TEST] ──────────────────────────────────────────")
                                 
     # ─────────────────────────────────────────────────────────────────────────
     # EXECUTION
@@ -2935,3 +3034,22 @@ class AnalyticsEngine:
             
         if "UnattendedArea" in self.parameters_data:
             pass
+            
+        # YOLOE CLEAN (JUST TEST)
+        # ── YoloeTest
+        if "YoloeTest" in self.parameters_data:
+            active_trackers = self.parent.last_n_frame_tracker_ids
+            entry_times     = self.running_data["YoloeTest"]["person_entry_times"]
+
+            self.violation_id_data["YoloeTest"] = [
+                tid for tid in self.violation_id_data["YoloeTest"]
+                if tid in active_trackers
+            ]
+            # key format is now: "{tracker_id}_scaffold_{s_idx}"
+            # so split on "_scaffold_" to get tracker_id
+            keys_to_remove = [
+                k for k in entry_times.keys()
+                if k.split("_scaffold_")[0] not in active_trackers
+            ]
+            for k in keys_to_remove:
+                del entry_times[k]

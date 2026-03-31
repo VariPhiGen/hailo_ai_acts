@@ -5,13 +5,13 @@ import json
 import logging
 from pathlib import Path
 import os
-import time  # <-- Added for the circuit breaker
+import time 
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 SERVER_IP = os.getenv("YOLOE_SERVER_IP", "localhost")
 SERVER_PORT = os.getenv("YOLOE_SERVER_PORT", "5000")
-YOLOE_SERVER_URL = f"http://{SERVER_IP}:{SERVER_PORT}/predict_prompt"
+YOLOE_SERVER_BASE_URL = f"http://{SERVER_IP}:{SERVER_PORT}"
 
 
 class YOLOEHandler:
@@ -90,67 +90,78 @@ class YOLOEHandler:
         with open(self._output_path, "w") as f:
             json.dump(records, f, indent=2)
 
-    def text_prompt(self, image_input, prompts, conf=0.05, activity_uses_yoloe=True):
+    def predict_yoloe(self, image_input, prompts=None, activity_id=None, mode="text", conf=0.05):
         """
-        Main inference call. Added `activity_uses_yoloe` to easily bypass.
+        Unified YOLOE call for text, visual, and both modes.
+          mode='text'   → /predict_prompt   (needs prompts)
+          mode='visual' → /predict_visual   (needs activity_id)
+          mode='both'   → /predict_both     (needs prompts + activity_id)
         """
-        # 1. SCENARIO A: Bypass instantly if the activity doesn't use YOLOE
-        if not activity_uses_yoloe or not prompts:
+        # 1. Basic bypass for text mode with no labels
+        if mode == "text" and not prompts:
             return None
 
-        # 2. SCENARIO B: Circuit Breaker for offline server
+        # 2. Circuit Breaker — bypass instantly if server is offline
         current_time = time.time()
         if not self.server_online:
-            # If 5 seconds haven't passed yet, bypass instantly without blocking Hailo
             if (current_time - self.last_ping_time) < self.ping_interval:
-                return None 
-            
-            # 5 seconds passed. Do a lightning-fast (1 second) ping to see if it's awake
+                return None
+            # Ping interval passed — do a fast check on /health
             self.last_ping_time = current_time
             try:
-                ping_url = YOLOE_SERVER_URL.replace("/predict_prompt", "/docs")
+                ping_url = f"{YOLOE_SERVER_BASE_URL}/health"
                 response = requests.get(ping_url, timeout=1.0)
                 if response.status_code == 200:
                     logging.info("YOLOE server is back ONLINE! Resuming inferences.")
                     self.server_online = True
             except requests.exceptions.RequestException:
-                # Still offline. Bypass again.
                 return None
 
-        # 3. Server is online. Proceed with normal inference.
+        # 3. Encode frame
         try:
             encoded_bytes = self._encode_frame(image_input)
         except (ValueError, TypeError) as e:
             logging.error(f"Frame encoding failed: {e}")
             return None
 
-        prompts_str = ",".join(str(p).strip() for p in prompts) if isinstance(prompts, list) else str(prompts)
-        files = {"file": ("frame.jpg", encoded_bytes, "image/jpeg")}
-        data  = {"prompts": prompts_str, "conf": float(conf)}
+        # 4. Build endpoint and payload based on mode
+        files   = {"file": ("frame.jpg", encoded_bytes, "image/jpeg")}
+        data    = {"conf": float(conf)}
+        timeout = 30.0 if mode == "text" else 120.0
 
+        if mode == "both":
+            endpoint        = f"{YOLOE_SERVER_BASE_URL}/predict_both"
+            data["prompts"] = ",".join(str(p).strip() for p in prompts) if isinstance(prompts, list) else str(prompts)
+            data["activity_id"] = activity_id
+        elif mode == "visual":
+            endpoint            = f"{YOLOE_SERVER_BASE_URL}/predict_visual"
+            data["activity_id"] = activity_id
+        else:  # text
+            endpoint        = f"{YOLOE_SERVER_BASE_URL}/predict_prompt"
+            data["prompts"] = ",".join(str(p).strip() for p in prompts) if isinstance(prompts, list) else str(prompts)
+
+        # 5. Make the request
         try:
-            response = requests.post(YOLOE_SERVER_URL, files=files, data=data, timeout=120.0)
+            response = requests.post(endpoint, files=files, data=data, timeout=timeout)
             response.raise_for_status()
             result = response.json()
 
         except requests.exceptions.ConnectionError:
-            # Server just died! Trip the circuit breaker and bypass.
             logging.warning("YOLOE Server went OFFLINE. Bypassing YOLOE to maintain Hailo speed.")
             self.server_online = False
             self.last_ping_time = time.time()
             return None
-            
         except requests.exceptions.Timeout:
-            logging.error("YOLOE Server timed out — model may still be loading.")
+            logging.error(f"YOLOE Server timed out ({mode} mode) — model may still be loading.")
             return None
         except requests.exceptions.HTTPError:
             logging.error(f"Server HTTP error {response.status_code}: {response.text[:200]}")
             return None
         except Exception as e:
-            logging.error(f"Request failed: {e}")
+            logging.error(f"Request failed ({mode}): {e}")
             return None
 
-        # Persist to disk and queue
+        # 6. Persist to disk and push to queue
         self._append_to_json(result)
         if self.results_queue is not None:
             try:

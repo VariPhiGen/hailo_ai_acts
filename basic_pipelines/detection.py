@@ -338,21 +338,26 @@ class user_app_callback_class(app_callback_class):
             params = details.get("parameters", {})
             if not params.get("yoloe", 0):
                 continue
-
+            
+            mode = params.get("yoloe_mode", "text")
             condition_labels = params.get("condition_label", [])
             if not isinstance(condition_labels, list):
+                continue
+                
+            if mode == "text" and not condition_labels:
                 continue
 
             interval = int(params.get("yoloe_interval", 0) or 0)
             if interval <= 0:
                 continue
 
-            confidence = float(params.get("yoloe_confidence", 0.0) or 0.0)
+            confidence = float(params.get("yoloe_confidence", 0.1) or 0.1)
 
             self.yoloe_activities[activity_name] = {
                 "condition_labels": condition_labels,
                 "interval": interval,
                 "confidence": confidence,
+                "mode": mode,
                 "next_run_ts": now_ts + interval,
             }
             self.yoloe_intervals.append(interval)
@@ -362,6 +367,70 @@ class user_app_callback_class(app_callback_class):
         if self.yoloe_intervals:
             self.yoloe_start_ts = now_ts
             self.yoloe_last_run_global = 0.0
+            
+    def _check_yoloe_api_health(self):
+        """
+        Called once at startup after _init_yoloe_from_config.
+        Pings the YOLOE server health endpoint and prints a warning
+        for each configured activity if the server is unreachable.
+        Does NOT block startup — Hailo pipeline runs regardless.
+        """
+        if not self.yoloe_activities:
+            return
+
+        import requests
+        SERVER_IP   = os.getenv("YOLOE_SERVER_IP",  "localhost")
+        SERVER_PORT = os.getenv("YOLOE_SERVER_PORT", "5000")
+        health_url  = f"http://{SERVER_IP}:{SERVER_PORT}/health"
+
+        try:
+            resp = requests.get(health_url, timeout=3.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                server_activities = data.get("activities", {})
+                print(f"✅ YOLOE API is ACTIVE — model: {data.get('model', 'unknown')}")
+
+                # Warn if any visual/both activity has no annotation saved yet
+                for act_name, info in self.yoloe_activities.items():
+                    mode = info["mode"]
+                    if mode in ("visual", "both"):
+                        if act_name not in server_activities:
+                            print(
+                                f"⚠️  YOLOE API is active but activity '{act_name}' "
+                                f"has no visual prompts saved yet. "
+                                f"Open app.py and annotate a reference image for this activity."
+                            )
+                        else:
+                            srv = server_activities[act_name]
+                            if not srv.get("has_image"):
+                                print(
+                                    f"⚠️  YOLOE activity '{act_name}': "
+                                    f"reference image missing on server — re-save in app.py."
+                                )
+                            else:
+                                print(
+                                    f"✅ YOLOE activity '{act_name}' ({mode}): "
+                                    f"{srv['n_boxes']} boxes, "
+                                    f"classes={srv['classes']}"
+                                )
+                    else:
+                        print(f"✅ YOLOE activity '{act_name}' ({mode}): ready")
+            else:
+                self._warn_yoloe_inactive()
+
+        except requests.exceptions.RequestException:
+            self._warn_yoloe_inactive()
+
+
+    def _warn_yoloe_inactive(self):
+        print("─" * 60)
+        print("⚠️  YOLOE API is INACTIVE or unreachable.")
+        print("   The following activities will bypass YOLOE until the")
+        print("   server comes online (circuit breaker will retry every 5s):")
+        for act_name, info in self.yoloe_activities.items():
+            print(f"   • {act_name}  [{info['mode']} mode]")
+        print("   Hailo pipeline will continue running normally.")
+        print("─" * 60)
 
     def _yoloe_should_run_for_activity(self, activity_name, now_ts):
         info = self.yoloe_activities.get(activity_name)
@@ -371,7 +440,7 @@ class user_app_callback_class(app_callback_class):
         return now_ts >= info.get("next_run_ts", 0.0)
 
     def _yoloe_thread_loop(self):
-        if not self.yoloe_activities or not self.yoloe_condition_labels: return
+        if not self.yoloe_activities: return
         base_sleep = 1.0
 
         while self.yoloe_running:
@@ -382,31 +451,33 @@ class user_app_callback_class(app_callback_class):
                     image = self.model_image.copy() if self.model_image is not None else None
 
                 if image is not None:
-                    should_run_any = any(
-                        self._yoloe_should_run_for_activity(act_name, now_ts)
-                        for act_name in self.yoloe_activities.keys()
-                    )
-
-                    if should_run_any and self.yoloe_handler is not None:
-                        # Call your updated YOLOEHandler instance method
+                    for act_name, info in self.yoloe_activities.items():
+                        if not self._yoloe_should_run_for_activity(act_name, now_ts):
+                            continue
+                        if self.yoloe_handler is None:
+                            continue
                         try:
-                            api_result = self.yoloe_handler.text_prompt(image, self.yoloe_condition_labels)
+                            api_result = self.yoloe_handler.predict_yoloe(
+                                image,
+                                prompts=info["condition_labels"],
+                                activity_id=act_name,
+                                mode=info["mode"],
+                                conf=info["confidence"]
+                            )
                         except Exception as e:
-                            print(f"DEBUG: YOLOE text_prompt failed: {e}")
+                            print(f"DEBUG: YOLOE predict_yoloe failed for {act_name}: {e}")
                             api_result = None
 
                         if api_result is not None:
                             with self.yoloe_lock:
-                                self.yoloe_results = {"result": api_result, "last_run": now_ts}
+                                self.yoloe_results[act_name] = {"result": api_result, "last_run": now_ts}
                                 self.yoloe_last_run_global = now_ts
-
-                                for act_name, info in self.yoloe_activities.items():
-                                    if self._yoloe_should_run_for_activity(act_name, now_ts):
-                                        interval = info.get("interval", 0)
-                                        if interval > 0:
-                                            next_ts = info.get("next_run_ts", now_ts)
-                                            while next_ts <= now_ts: next_ts += interval
-                                            info["next_run_ts"] = next_ts
+                            interval = info.get("interval", 0)
+                            if interval > 0:
+                                next_ts = info.get("next_run_ts", now_ts)
+                                while next_ts <= now_ts:
+                                    next_ts += interval
+                                info["next_run_ts"] = next_ts
 
                 time.sleep(base_sleep)
             except Exception as e:
@@ -966,23 +1037,6 @@ if __name__ == "__main__":
     user_data.save_rtsp_images = bool(save_settings.get("save_rtsp_images", 0))
     user_data.take_video=bool(save_settings.get("take_video", 0))
     print(f"Save settings loaded from config: snapshots={user_data.save_snapshots}, rtsp_images={user_data.save_rtsp_images}")
-   
-    # ==========================================================
-    # Initialize centralized YOLOE control
-    # ==========================================================
-    try:
-        user_data.yoloe_handler = YOLOEHandler(config)
-        # Link the results queue if you want YOLOE results sent to Kafka
-        # user_data.yoloe_handler.set_results_queue(results_events_queue) 
-        
-        user_data._init_yoloe_from_config(config)
-        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
-            user_data.yoloe_running = True
-            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
-            user_data.yoloe_thread.start()
-            print(f"✅ YOLOE centralized scheduler started with activities: {list(user_data.yoloe_activities.keys())}")
-    except Exception as e:
-        print(f"❌ Failed to initialize YOLOE centralized control: {e}")
         
     # Snapshot if configured
     if "camera_details" in config:
@@ -1025,6 +1079,23 @@ if __name__ == "__main__":
         kafka_thread = Thread(target=kafka_handler.run_kafka_loop, args=(results_events_queue, results_analytics_queue,user_data.api_mode,user_data.kafka_mode))
         kafka_thread.daemon = True
         kafka_thread.start()
+        
+    # ==========================================================
+    # Initialize centralized YOLOE control
+    # ==========================================================
+    try:
+        user_data.yoloe_handler = YOLOEHandler(config)
+        # Link the results queue if you want YOLOE results sent to Kafka
+        # user_data.yoloe_handler.set_results_queue(results_events_queue) 
+        
+        user_data._init_yoloe_from_config(config)
+        if user_data.yoloe_activities and user_data.yoloe_condition_labels:
+            user_data.yoloe_running = True
+            user_data.yoloe_thread = Thread(target=user_data._yoloe_thread_loop, daemon=True)
+            user_data.yoloe_thread.start()
+            print(f"✅ YOLOE centralized scheduler started with activities: {list(user_data.yoloe_activities.keys())}")
+    except Exception as e:
+        print(f"❌ Failed to initialize YOLOE centralized control: {e}")
     
     #Getting Data available
     sensor_id=config.get("sensor_id")
