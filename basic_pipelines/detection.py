@@ -160,7 +160,12 @@ class user_app_callback_class(app_callback_class):
         self.yoloe_running = False
         
         # ANPR Handler
-        self.anpr_handler = None
+        self.anpr_handler = None        # set in main() via _init_anpr_from_config
+        self.anpr_activities  = {}      # {activity_name: {"interval": int, "next_run_ts": float}}
+        self.anpr_results     = {}      # {activity_name: {"plate": str, "last_run": float}}
+        self.anpr_lock        = Lock()  # guards anpr_results + anpr_activities
+        self.anpr_running     = False   # controls the background thread
+        self.anpr_thread      = None
         
     def calibration_check(self,flag=False):
         """
@@ -538,6 +543,146 @@ class user_app_callback_class(app_callback_class):
         """
         with self.yoloe_lock:
             return self.yoloe_results.get(activity_name)
+        
+
+# ============================================================================
+#  ANPR CENTRAL CONTROL
+# ============================================================================
+ 
+    def _init_anpr_from_config(self, config: dict):
+        """
+        Reads ANPR config for each active activity that has  "anpr": 1.
+ 
+        Expected JSON shape inside an activity's  parameters  block:
+            {
+                "anpr": 1,
+                "anpr_interval": 30      ← seconds between full-frame ANPR sweeps
+                                           (0 or absent  → event-driven only, no thread)
+            }
+ 
+        Activities with  anpr_interval > 0  are added to self.anpr_activities
+        so the background thread runs them on a timer (Mode A — interval).
+ 
+        Activities with  anpr_interval == 0  still get access to
+        self.anpr_handler for on-demand / event-driven calls (Mode B).
+ 
+        No network calls are made here.  The circuit breaker in
+        anpr_handler.py handles a dead server gracefully at call time.
+        """
+        self.anpr_activities = {}
+        now_ts = time.time()
+ 
+        activities_data   = config.get("activities_data",   {})
+        active_activities = config.get("active_activities", [])
+ 
+        for activity_name, details in activities_data.items():
+            if activity_name not in active_activities:
+                continue
+ 
+            params = details.get("parameters", {})
+ 
+            # Only configure activities that explicitly opt in to ANPR
+            if not params.get("anpr", 0):
+                continue
+ 
+            interval = int(params.get("anpr_interval", 0) or 0)
+ 
+            if interval > 0:
+                # Mode A: interval-based background sweeps on the full frame
+                self.anpr_activities[activity_name] = {
+                    "interval":    interval,
+                    "next_run_ts": now_ts + interval,
+                }
+                logging.info(
+                    f"[ANPR] '{activity_name}' registered for interval-based "
+                    f"sweeps every {interval}s."
+                )
+            else:
+                # Mode B: event-driven only — no background sweep needed,
+                # the activity calls self.parent.anpr_handler.process_frame()
+                # from its own one-off thread.
+                logging.info(
+                    f"[ANPR] '{activity_name}' registered for event-driven "
+                    f"(on-demand) ANPR only."
+                )
+ 
+        if self.anpr_activities:
+            logging.info(
+                f"[ANPR] Interval activities: "
+                f"{list(self.anpr_activities.keys())}"
+            )
+        else:
+            logging.info("[ANPR] No interval-based ANPR activities configured.")
+ 
+ 
+    def _anpr_thread_loop(self):
+        """
+        Daemon thread: fires ANPR on the latest Hailo full frame at each
+        activity's configured interval and stores the result in self.anpr_results.
+ 
+        This is Mode A (interval-based).  Activities read results via:
+            plate = self.parent.anpr_results.get("MyActivity", {}).get("plate")
+ 
+        Mode B (event-driven) never goes through this thread — each violation
+        spawns its OWN one-off thread that calls anpr_handler.process_frame()
+        directly (see AnprTest in activities.py).
+        """
+        if not self.anpr_activities:
+            return
+ 
+        base_sleep = 1.0   # poll interval in seconds
+ 
+        while self.anpr_running:
+            now_ts = time.time()
+            try:
+                # ── Snapshot the latest Hailo frame (thread-safe) ──────────── #
+                frame = None
+                with self.anpr_lock:
+                    if self.model_image is not None:
+                        frame = self.model_image.copy()
+ 
+                if frame is None:
+                    time.sleep(base_sleep)
+                    continue
+ 
+                # ── Check each interval-configured activity ────────────────── #
+                for act_name, info in list(self.anpr_activities.items()):
+                    if now_ts < info.get("next_run_ts", 0.0):
+                        continue   # not time yet
+ 
+                    plate = None
+                    try:
+                        plate = self.anpr_handler.process_frame(
+                            frame,
+                            activity_name=act_name,
+                            extra_meta={"mode": "interval"},
+                        )
+                    except Exception as exc:
+                        logging.error(
+                            f"[ANPR] Interval call for '{act_name}' failed: {exc}"
+                        )
+ 
+                    # ── Store result ───────────────────────────────────────── #
+                    if plate is not None:
+                        with self.anpr_lock:
+                            self.anpr_results[act_name] = {
+                                "plate":    plate,
+                                "last_run": now_ts,
+                            }
+ 
+                    # ── Advance next_run_ts (skip missed windows) ──────────── #
+                    with self.anpr_lock:
+                        interval = info.get("interval", 0)
+                        if interval > 0:
+                            next_ts = info.get("next_run_ts", now_ts)
+                            while next_ts <= now_ts:
+                                next_ts += interval
+                            info["next_run_ts"] = next_ts
+ 
+            except Exception as exc:
+                logging.error(f"[ANPR] Thread loop error: {exc}")
+ 
+            time.sleep(base_sleep)
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
@@ -1112,6 +1257,30 @@ if __name__ == "__main__":
             print("ℹ️ YOLOE: no activities configured.")
     except Exception as e:
         print(f"❌ Failed to initialize YOLOE: {e}")
+
+    # ==========================================================
+    # Initialize centralized ANPR control
+    # ==========================================================
+    try:
+        user_data.anpr_handler = ANPRHandler(config)
+        user_data._init_anpr_from_config(config)
+ 
+        if user_data.anpr_activities:
+            # Mode A activities exist → start the background sweep thread
+            user_data.anpr_running = True
+            user_data.anpr_thread  = Thread(
+                target=user_data._anpr_thread_loop, daemon=True
+            )
+            user_data.anpr_thread.start()
+            print(
+                f"✅ ANPR interval scheduler started: "
+                f"{list(user_data.anpr_activities.keys())}"
+            )
+        else:
+            # Only Mode B (event-driven) activities or none at all
+            print("ℹ️ ANPR: handler ready (event-driven mode only — no interval thread).")
+    except Exception as exc:
+        print(f"❌ Failed to initialize ANPR: {exc}")
         
     # Snapshot if configured
     if "camera_details" in config:

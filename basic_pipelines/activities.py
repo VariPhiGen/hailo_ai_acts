@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import math
 from collections import defaultdict
+import threading
 
 from shapely.geometry import Polygon, box as shapely_box
 
@@ -312,6 +313,13 @@ class AnalyticsEngine:
                     for zone in self.zone_data["UnattendedArea"].keys()
                 }
                 self.active_methods.append(self.unattended_area)
+
+            # to test anpr 
+            elif activity == "AnprTest":
+                # tracker_id → {"first_seen": float, "anpr_dispatched": bool}
+                self.running_data["AnprTest"]     = {}
+                self.violation_id_data["AnprTest"] = []   # tracker_ids already violated
+                self.active_methods.append(self.anpr_test)
                 
                 
 # ---------------------- Activities fucntions ---------------------------------------
@@ -2668,6 +2676,87 @@ class AnalyticsEngine:
 
                 # set 1-hour cooldown after alert
                 zone_state["cooldown_until"] = current_time + 3600.0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ANPR TEST LOGIC (30-Second Dwell Trigger, No Kafka)
+    # ─────────────────────────────────────────────────────────────────────────
+    def anpr_test(self):
+        params = self.parameters_data["AnprTest"]
+        tz     = self.timezones["AnprTest"]
+
+        # 1. HELPER: Check if activity is scheduled to run right now
+        if not activity_active_time(params, tz):
+            return
+
+        # 2. 1-second gate
+        if time.time() - params.get("last_check_time", 0) < 1.0:
+            return
+        params["last_check_time"] = time.time()
+
+        if getattr(self.parent, 'anpr_handler', None) is None:
+            return
+
+        dwell_limit = int(params.get("dwell_limit", 30))
+        vehicle_classes = params.get("subcategory_mapping", ["car", "truck", "bus", "motorcycle"])
+
+        current_time  = time.time()
+        tracking_data = self.running_data["AnprTest"]
+        violation_ids = self.violation_id_data["AnprTest"]
+
+        vehicle_indices = [i for i, cls in enumerate(self.parent.classes) if cls in vehicle_classes]
+
+        for idx in vehicle_indices:
+            tid       = self.parent.tracker_ids[idx]
+            obj_class = self.parent.classes[idx]
+            box       = self.parent.detection_boxes[idx]
+
+            if tid in violation_ids:
+                continue
+
+            # Track first-seen time
+            if tid not in tracking_data:
+                tracking_data[tid] = current_time
+                continue
+
+            dwell_seconds = current_time - tracking_data[tid]
+
+            if dwell_seconds > dwell_limit:
+                violation_ids.append(tid)
+
+                # 3. Safely Crop
+                x1, y1, x2, y2 = [int(v) for v in box]
+                h, w = self.parent.image.shape[:2]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                crop = self.parent.image[y1:y2, x1:x2].copy()
+
+                if crop.size == 0:
+                    continue
+
+                print(f"\n[ANPR TEST] {obj_class} {tid} tracked for >{dwell_limit}s. Triggering API...")
+
+                extra_meta = {
+                    "tracker_id": tid,
+                    "class": obj_class,
+                    "dwell_seconds": round(dwell_seconds, 1),
+                    "timestamp": datetime.now(tz).isoformat()
+                }
+
+                # 4. Threading: Just hit the API (Handler handles the JSON logging)
+                def _run_anpr_only(crop_img, meta):
+                    plate_text = self.parent.anpr_handler.process_frame(
+                        image_crop=crop_img, 
+                        activity_name="AnprTest", 
+                        extra_meta=meta
+                    )
+                    if plate_text:
+                        print(f"[ANPR TEST] ✅ Success! Plate: {plate_text} (Tracker: {meta['tracker_id']})")
+
+                threading.Thread(
+                    target=_run_anpr_only,
+                    args=(crop, extra_meta),
+                    daemon=True
+                ).start()
                                 
     # ─────────────────────────────────────────────────────────────────────────
     # EXECUTION
@@ -2935,3 +3024,18 @@ class AnalyticsEngine:
             
         if "UnattendedArea" in self.parameters_data:
             pass
+        
+        # ── AnprTest
+        if "AnprTest" in self.parameters_data:
+            active_trackers = self.parent.last_n_frame_tracker_ids
+            
+            # Prune stale trackers from the dwell-time dictionary
+            stale = [tid for tid in self.running_data["AnprTest"] if tid not in active_trackers]
+            for tid in stale:
+                del self.running_data["AnprTest"][tid]
+                
+            # Prune processed IDs so if the same car comes back tomorrow, it gets tested again
+            self.violation_id_data["AnprTest"] = [
+                tid for tid in self.violation_id_data["AnprTest"]
+                if tid in active_trackers
+            ]
