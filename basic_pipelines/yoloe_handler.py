@@ -50,7 +50,7 @@ class YOLOEHandler:
             or self.config.get("camera_id")
             or "detections"
         )
-        self._output_path = Path(f"{sensor_id}.json")
+        self._output_path = Path(f"{sensor_id}_yoloe.json")
         logging.info(f"YOLOEHandler ready — saving detections to '{self._output_path}'")
 
     # ── Queue ─────────────────────────────────────────────────────────────── #

@@ -26,6 +26,7 @@ import argparse
 import atexit
 import signal
 from snapshotapi import Snapshot
+import logging
 
 # Local modules
 from kafka_handler import KafkaHandler

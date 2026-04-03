@@ -43,7 +43,7 @@
 		"max_diff_rais": 10
 	},
 	"camera_details": {
-		"RTSP_URL": "/home/arresto/hailo_ai_acts/resources/videos/Queue.mp4",
+		"RTSP_URL": "/home/arresto/hailo_ai_acts/resources/videos/anpr.mp4",
 		"camera_ip": "172.16.16.151",
 		"username": "admin",
 		"password": "Arresto%402024",
@@ -53,13 +53,9 @@
 	"activities_data": {
 		"AnprTest": {
 			"parameters": {
-				"dwell_limit": 2,
+				"dwell_limit": 10,
 				"subcategory_mapping": [
-					"car",
-					"truck",
-					"bus",
-					"motorcycle",
-					"vehicle"
+					"car"
 				],
 				"timezone": "Asia/Kolkata",
 				"relay": 0,
