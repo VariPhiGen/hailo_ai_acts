@@ -48,6 +48,9 @@ from basic_pipelines.yoloe_handler import YOLOEHandler
 # anpr handler
 from basic_pipelines.anpr_handler import ANPRHandler
 
+# FACE RECOGNITION
+from basic_pipelines.face_recognition_handler import FaceRecognitionHandler
+
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
 # -----------------------------------------------------------------------------------------------
@@ -167,6 +170,14 @@ class user_app_callback_class(app_callback_class):
         self.anpr_lock        = Lock()  # guards anpr_results + anpr_activities
         self.anpr_running     = False   # controls the background thread
         self.anpr_thread      = None
+        
+        # Face Recognition Handler #
+        self.facerec_handler   = None     # set in main() after config is loaded
+        self.facerec_activities = {}      # {activity_name: {"interval": int, "next_run_ts": float}}
+        self.facerec_results    = {}      # {tracker_id: {"person_name": str, "confidence": float, "last_run": float}}
+        self.facerec_lock       = Lock()  # guards facerec_results + facerec_activities
+        self.facerec_running    = False
+        self.facerec_thread     = None
         
     def calibration_check(self,flag=False):
         """
@@ -684,6 +695,194 @@ class user_app_callback_class(app_callback_class):
                 logging.error(f"[ANPR] Thread loop error: {exc}")
  
             time.sleep(base_sleep)
+            
+            
+# ============================================================================
+#  FACE RECOGNITION CENTRAL CONTROL
+# ============================================================================
+ 
+    def _init_facerec_from_config(self, config: dict):
+        """
+        Reads face-rec config for each active activity that has "face_rec": 1.
+ 
+        Expected JSON inside the activity's parameters block:
+        {
+            "face_rec": 1,
+            "facerec_interval": 5    ← seconds between batch sweeps (Mode A)
+                                       0 or absent = event-driven only (Mode B)
+        }
+ 
+        Mode A (interval > 0): background thread grabs ALL visible person
+        crops every N seconds and batch-sends them to the API.
+ 
+        Mode B (interval == 0): the activity itself decides when to fire —
+        e.g. only on first appearance of a new tracker_id.
+        """
+        self.facerec_activities = {}
+        now_ts = time.time()
+ 
+        activities_data   = config.get("activities_data",   {})
+        active_activities = config.get("active_activities", [])
+ 
+        for activity_name, details in activities_data.items():
+            if activity_name not in active_activities:
+                continue
+ 
+            params = details.get("parameters", {})
+            if not params.get("face_rec", 0):
+                continue
+ 
+            interval = int(params.get("facerec_interval", 0) or 0)
+ 
+            if interval > 0:
+                self.facerec_activities[activity_name] = {
+                    "interval":    interval,
+                    "next_run_ts": now_ts + interval,
+                }
+                logging.info(
+                    f"[FaceRec] '{activity_name}' interval sweep every {interval}s."
+                )
+            else:
+                logging.info(
+                    f"[FaceRec] '{activity_name}' event-driven mode only."
+                )
+ 
+        if self.facerec_activities:
+            logging.info(
+                f"[FaceRec] Interval activities: "
+                f"{list(self.facerec_activities.keys())}"
+            )
+        else:
+            logging.info("[FaceRec] No interval activities configured.")
+ 
+ 
+    def _facerec_thread_loop(self):
+        """
+        Daemon thread — Mode A (interval-based).
+ 
+        Every N seconds:
+          1. Snapshot the latest Hailo frame + detection data.
+          2. Find all "person" detections.
+          3. Crop the face region (top 35% of each person bbox).
+          4. Skip crops that are too small or where the person is facing away.
+          5. Batch-send all valid crops in ONE API call.
+          6. Store per-tracker results in self.facerec_results.
+ 
+        Activities read results via:
+            result = self.parent.facerec_results.get(tracker_id)
+            # {"person_name": "Alice", "confidence": 97.8, "last_run": float}
+        """
+        if not self.facerec_activities:
+            return
+ 
+        MIN_FACE_PX = 40   # ignore face crops smaller than 40×40 — not useful
+        base_sleep  = 0.5
+ 
+        while self.facerec_running:
+            now_ts = time.time()
+            try:
+                # ── Snapshot frame data under lock ────────────────────────── #
+                frame = classes = tracker_ids = boxes = None
+                ratio = padx = pady = orig_h = orig_w = None
+ 
+                with self.facerec_lock:
+                    if self.model_image is not None:
+                        frame       = self.model_image.copy()
+                        classes     = list(self.classes or [])
+                        tracker_ids = list(self.tracker_ids or [])
+                        boxes       = list(self.detection_boxes or [])
+                        ratio       = self.ratio  or 1.0
+                        padx        = self.padx   or 0
+                        pady        = self.pady   or 0
+                        orig_h      = self.original_height or frame.shape[0]
+                        orig_w      = self.original_width  or frame.shape[1]
+ 
+                if frame is None:
+                    time.sleep(base_sleep)
+                    continue
+ 
+                for act_name, info in list(self.facerec_activities.items()):
+                    if now_ts < info.get("next_run_ts", 0.0):
+                        continue
+ 
+                    # ── Collect person face crops ──────────────────────────── #
+                    face_crops = []
+                    for i, cls in enumerate(classes):
+                        if cls != "person":
+                            continue
+                        tid = tracker_ids[i]
+                        box = boxes[i]
+ 
+                        # Reverse letterbox → original pixel coords
+                        x1 = max(0, int((box[0] - padx) / ratio))
+                        y1 = max(0, int((box[1] - pady) / ratio))
+                        x2 = min(orig_w, int((box[2] - padx) / ratio))
+                        y2 = min(orig_h, int((box[3] - pady) / ratio))
+ 
+                        # Face = top 35% of person bounding box
+                        face_y2 = y1 + max(1, int((y2 - y1) * 0.35))
+                        face_crop = frame[y1:face_y2, x1:x2]
+ 
+                        fh, fw = face_crop.shape[:2]
+                        if fh < MIN_FACE_PX or fw < MIN_FACE_PX:
+                            continue   # person too far away
+ 
+                        face_crops.append({
+                            "tracker_id": tid,
+                            "crop":       face_crop.copy(),
+                            "extra_meta": {"activity": act_name, "mode": "interval"},
+                        })
+ 
+                    if not face_crops:
+                        continue
+ 
+                    # ── Batch API call ─────────────────────────────────────── #
+                    try:
+                        results = self.facerec_handler.match_faces(
+                            face_crops,
+                            activity_name=act_name,
+                        )
+                    except Exception as exc:
+                        logging.error(
+                            f"[FaceRec] Interval call '{act_name}' failed: {exc}"
+                        )
+                        results = []
+ 
+                    # ── Store per-tracker results ──────────────────────────── #
+                    with self.facerec_lock:
+                        for r in results:
+                            if r.get("status") == "match_found":
+                                self.facerec_results[r["tracker_id"]] = {
+                                    "person_name": r["person_name"],
+                                    "confidence":  r["confidence"],
+                                    "last_run":    now_ts,
+                                }
+ 
+                    # ── Advance next_run_ts ────────────────────────────────── #
+                    with self.facerec_lock:
+                        interval = info.get("interval", 0)
+                        if interval > 0:
+                            next_ts = info.get("next_run_ts", now_ts)
+                            while next_ts <= now_ts:
+                                next_ts += interval
+                            info["next_run_ts"] = next_ts
+ 
+            except Exception as exc:
+                logging.error(f"[FaceRec] Thread loop error: {exc}")
+ 
+            time.sleep(base_sleep)
+ 
+ 
+    def get_facerec_result(self, tracker_id: int) -> dict | None:
+        """
+        Thread-safe accessor for activity modules.
+ 
+        Returns:
+            {"person_name": str, "confidence": float, "last_run": float}
+            or None if tracker_id not yet identified.
+        """
+        with self.facerec_lock:
+            return self.facerec_results.get(tracker_id)
 
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
@@ -1282,6 +1481,28 @@ if __name__ == "__main__":
             print("ℹ️ ANPR: handler ready (event-driven mode only — no interval thread).")
     except Exception as exc:
         print(f"❌ Failed to initialize ANPR: {exc}")
+        
+    # ==========================================================
+    # Initialize centralized Face Recognition control
+    # ==========================================================
+    try:
+        user_data.facerec_handler = FaceRecognitionHandler(config)
+        user_data._init_facerec_from_config(config)
+ 
+        if user_data.facerec_activities:
+            user_data.facerec_running = True
+            user_data.facerec_thread  = Thread(
+                target=user_data._facerec_thread_loop, daemon=True
+            )
+            user_data.facerec_thread.start()
+            print(
+                f"✅ FaceRec interval scheduler started: "
+                f"{list(user_data.facerec_activities.keys())}"
+            )
+        else:
+            print("ℹ️ FaceRec: handler ready (event-driven mode only).")
+    except Exception as exc:
+        print(f"❌ Failed to initialize FaceRecognition: {exc}")
         
     # Snapshot if configured
     if "camera_details" in config:

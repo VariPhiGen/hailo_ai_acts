@@ -321,6 +321,13 @@ class AnalyticsEngine:
                 self.violation_id_data["AnprTest"] = []   # tracker_ids already violated
                 self.active_methods.append(self.anpr_test)
                 
+            # TO TEST FACE RECOGNITION
+            elif activity == "FaceRecognition":
+                self.running_data["FaceRecognition"] = {}
+                # violation_id_data holds tids whose identity is confirmed
+                self.violation_id_data["FaceRecognition"] = {}   # tid → person_name
+                self.active_methods.append(self.face_recognition)
+                
                 
 # ---------------------- Activities fucntions ---------------------------------------
     # ─────────────────────────────────────────────────────────────────────────
@@ -2757,6 +2764,211 @@ class AnalyticsEngine:
                     args=(crop, extra_meta),
                     daemon=True
                 ).start()
+                
+    # ─────────────────────────────────────────────────────────────────────────────
+    # face_recognition
+    # ─────────────────────────────────────────────────────────────────────────────
+    def face_recognition(self):
+        """
+        Event-driven face recognition. Fires on first appearance of each person
+        tracker_id, or re-fires after facerec_recheck_interval if no match was
+        found the first time.
+     
+        Per-tracker state in self.running_data["FaceRecognition"][tid]:
+            first_seen         float   — when this tracker first appeared
+            last_queried       float   — last time we sent this tid to the API
+            status             str     — "pending" | "match_found" | "no_match"
+            person_name        str|None
+            confidence         float|None
+            dispatched         bool    — True while a thread is in-flight
+        """
+        params = self.parameters_data["FaceRecognition"]
+        tz     = self.timezones["FaceRecognition"]
+     
+        # ── 1-second gate ─────────────────────────────────────────────────────── #
+        if time.time() - params.get("last_check_time", 0) < 1.0:
+            return
+        params["last_check_time"] = time.time()
+     
+        if self.parent.facerec_handler is None:
+            return
+     
+        # ── Config ────────────────────────────────────────────────────────────── #
+        min_face_px      = int(params.get("facerec_min_face_px",       50))
+        side_on_thresh   = float(params.get("facerec_side_on_threshold", 0.4))
+        recheck_interval = int(params.get("facerec_recheck_interval",   60))
+        person_classes   = params.get("subcategory_mapping", ["person"])
+     
+        now      = time.time()
+        tracking = self.running_data["FaceRecognition"]     # tid → state
+        known    = self.violation_id_data["FaceRecognition"] # tid → person_name
+     
+        classes     = self.parent.classes
+        tracker_ids = self.parent.tracker_ids
+        boxes       = self.parent.detection_boxes
+        image       = self.parent.image
+     
+        if image is None or not classes:
+            return
+     
+        ratio  = self.parent.ratio  or 1.0
+        padx   = self.parent.padx   or 0
+        pady   = self.parent.pady   or 0
+        orig_h = self.parent.original_height or image.shape[0]
+        orig_w = self.parent.original_width  or image.shape[1]
+     
+        person_indices = [
+            i for i, cls in enumerate(classes)
+            if cls in person_classes
+        ]
+     
+        # ── Collect crops that need to be queried this tick ───────────────────── #
+        to_query = []   # list of {"tracker_id": int, "crop": ndarray, "extra_meta": dict}
+     
+        for idx in person_indices:
+            tid = tracker_ids[idx]
+     
+            # ── Init state ────────────────────────────────────────────────────── #
+            if tid not in tracking:
+                tracking[tid] = {
+                    "first_seen":  now,
+                    "last_queried": 0.0,
+                    "status":      "pending",
+                    "person_name": None,
+                    "confidence":  None,
+                    "dispatched":  False,
+                }
+     
+            state = tracking[tid]
+     
+            # ── Already identified — skip ──────────────────────────────────────── #
+            if state["status"] == "match_found":
+                continue
+     
+            # ── Thread still in-flight for this tid — don't double-dispatch ───── #
+            if state["dispatched"]:
+                continue
+     
+            # ── "no_match" — only re-query after recheck_interval ─────────────── #
+            if state["status"] == "no_match":
+                if recheck_interval <= 0:
+                    continue
+                if (now - state["last_queried"]) < recheck_interval:
+                    continue
+     
+            # ── Build face crop ───────────────────────────────────────────────── #
+            box = boxes[idx]
+            x1  = max(0, int((box[0] - padx) / ratio))
+            y1  = max(0, int((box[1] - pady) / ratio))
+            x2  = min(orig_w, int((box[2] - padx) / ratio))
+            y2  = min(orig_h, int((box[3] - pady) / ratio))
+     
+            # Face region = top 35% of person bbox
+            face_y2   = y1 + max(1, int((y2 - y1) * 0.35))
+            face_crop = image[y1:face_y2, x1:x2]
+     
+            fh, fw = face_crop.shape[:2]
+     
+            # ── Size guard — too small to be useful ───────────────────────────── #
+            if fh < min_face_px or fw < min_face_px:
+                continue
+     
+            # ── Orientation guard — too narrow means person is side-on ────────── #
+            # A front-facing head is roughly square; side-on is much narrower.
+            # fw/fh < side_on_thresh → skip
+            if fw > 0 and fh > 0 and (fw / fh) < side_on_thresh:
+                continue
+     
+            state["dispatched"] = True
+            state["last_queried"] = now
+     
+            to_query.append({
+                "tracker_id": tid,
+                "crop":       face_crop.copy(),
+                "extra_meta": {
+                    "dwell": round(now - state["first_seen"], 1),
+                    "timestamp": datetime.now(tz).isoformat(),
+                },
+            })
+     
+        if not to_query:
+            return
+     
+        # ── Build a snapshot of state references for the thread ──────────────── #
+        # Pass the state dicts directly so the thread can write results back.
+        state_refs = {item["tracker_id"]: tracking[item["tracker_id"]]
+                      for item in to_query}
+     
+        print(
+            f"[FaceRec] Dispatching batch of {len(to_query)} face(s): "
+            f"tids={[item['tracker_id'] for item in to_query]}"
+        )
+     
+        # ── One-off daemon thread — never blocks GStreamer ────────────────────── #
+        def _dispatch_batch(crops, states, act_tz):
+            try:
+                results = self.parent.facerec_handler.match_faces(
+                    crops,
+                    activity_name="FaceRecognition",
+                )
+            except Exception as exc:
+                import logging
+                logging.error(f"[FaceRec] Batch dispatch error: {exc}")
+                results = []
+     
+            # ── Write results back into per-tracker state ─────────────────────── #
+            for r in results:
+                tid   = r["tracker_id"]
+                state = states.get(tid)
+                if state is None:
+                    continue
+     
+                state["dispatched"]  = False
+                state["status"]      = r.get("status", "no_match")
+                state["person_name"] = r.get("person_name")
+                state["confidence"]  = r.get("confidence")
+     
+                if state["status"] == "match_found":
+                    # Store in violation_id_data so other activities can read it
+                    self.violation_id_data["FaceRecognition"][tid] = state["person_name"]
+     
+                    print(
+                        f"[FaceRec] ✅ Identified tid={tid} as "
+                        f"'{state['person_name']}' ({state['confidence']}%)"
+                    )
+     
+                    # ── Optional: send to Kafka / API event stream ─────────────── #
+                    # Uncomment once you're happy with the results:
+                    #
+                    # datetimestamp = datetime.now(act_tz).isoformat()
+                    # self.parent.create_result_events(
+                    #     xywh=None,
+                    #     class_name="person",
+                    #     subcategory="FaceRecognition",
+                    #     parameters={
+                    #         "person_name": state["person_name"],
+                    #         "confidence":  state["confidence"],
+                    #         "tracker_id":  tid,
+                    #     },
+                    #     datetimestamp=datetimestamp,
+                    #     confidence=state["confidence"] / 100,
+                    #     image=None,
+                    # )
+     
+            # Mark any tids for which we got no result from the API as no_match
+            returned_tids = {r["tracker_id"] for r in results}
+            for tid, state in states.items():
+                if tid not in returned_tids:
+                    state["dispatched"] = False
+                    state["status"]     = "no_match"
+     
+        t = threading.Thread(
+            target=_dispatch_batch,
+            args=(to_query, state_refs, tz),
+            daemon=True,
+            name="facerec_batch",
+        )
+        t.start()
                                 
     # ─────────────────────────────────────────────────────────────────────────
     # EXECUTION
@@ -3025,7 +3237,7 @@ class AnalyticsEngine:
         if "UnattendedArea" in self.parameters_data:
             pass
         
-        # ── AnprTest
+        # ── AnprTest CLEAN
         if "AnprTest" in self.parameters_data:
             active_trackers = self.parent.last_n_frame_tracker_ids
             
@@ -3039,3 +3251,16 @@ class AnalyticsEngine:
                 tid for tid in self.violation_id_data["AnprTest"]
                 if tid in active_trackers
             ]
+            
+            
+        # FACE RECOG CLEAN
+        if "FaceRecognition" not in self.parameters_data:
+            return
+     
+        # Remove state for trackers that have left the scene
+        stale = [
+            tid for tid in self.running_data["FaceRecognition"]
+            if tid not in active_trackers
+        ]
+        for tid in stale:
+            del self.running_data["FaceRecognition"][tid]
