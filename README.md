@@ -1,9 +1,16 @@
 ## Pose Estimation
 
-Pose estimation runs **in parallel with object detection** in a single pipeline inside `detection_pipeline.py`.
-The pose HEF model path can be configured via `configuration.json` — no code changes needed.
+Pose estimation runs **in parallel with object detection** inside [`basic_pipelines/detection.py`](https://github.com/VariPhiGen/hailo_ai_acts/tree/pose_estimation/basic_pipelines).
 
-For a detailed understanding of how pose estimation is implemented, refer to:
+To enable it, simply set the `pose_hef_path` key in your `configuration.json` pointing to your pose HEF model file — no code changes needed. If the path is valid, pose estimation activates automatically. If it is missing or invalid, the pipeline runs in detection-only mode.
+
+The following pose data is then available per frame via `user_data`:
+- `pose_keypoints` — keypoint lists per detected person
+- `pose_tracker_ids` — tracker IDs for persons with pose
+- `pose_detection_boxes` — bounding boxes for those persons
+- `pose_classes` — class labels (all `"person"`)
+
+For a detailed understanding of how pose estimation is implemented end-to-end, refer to:
 📄 **[Pose Estimation Implementation Guide](https://github.com/VariPhiGen/hailo-apps-infra/tree/pose_estimation)**
 
 To test pose estimation, follow the Quick Start steps below.
