@@ -49,7 +49,7 @@ from basic_pipelines.yoloe_handler import YOLOEHandler
 from basic_pipelines.anpr_handler import ANPRHandler
 
 # FACE RECOGNITION
-from basic_pipelines.face_recognition_handler import FaceRecognitionHandler
+from basic_pipelines.face_handler import FaceRecognitionHandler
 
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function

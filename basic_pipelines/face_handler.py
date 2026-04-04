@@ -60,7 +60,7 @@ class FaceRecognitionHandler:
         if not base_url:
             raise ValueError("FACEREC_SERVER_URL not set")
 
-        self._predict_url = f"{base_url}/image_match"
+        self._predict_url = f"https://{base_url}/image_match"
 
         # ── Circuit breaker ───────────────────────────────────────────────── #
         self.server_online  = True

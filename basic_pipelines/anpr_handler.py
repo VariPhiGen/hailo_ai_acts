@@ -57,7 +57,7 @@ class ANPRHandler:
 
         if not base_url:
             raise ValueError("ANPR_SERVER_URL not set")
-        self._predict_url = f"{base_url}/detect-plate"
+        self._predict_url = f"https://{base_url}/detect-plate"
 
         # ── Circuit breaker ───────────────────────────────────────────────── #
         self.server_online  = True
