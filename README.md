@@ -167,6 +167,8 @@ t.start()
 ```
 Results are automatically persisted to `<sensor_id>_facerec.json` and the `facerec_results` dict is updated so other activities can read them immediately after the thread completes.
 
+To test ANPR and Face Recognition, follow the Quick Start steps below.
+
 ## Quick Start
 
 Clone the repo and work from its root directory:
