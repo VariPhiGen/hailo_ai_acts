@@ -1,3 +1,13 @@
+## Pose Estimation
+
+Pose estimation runs **in parallel with object detection** in a single pipeline inside `detection_pipeline.py`.
+The pose HEF model path can be configured via `configuration.json` — no code changes needed.
+
+For a detailed understanding of how pose estimation is implemented, refer to:
+📄 **[Pose Estimation Implementation Guide](https://github.com/VariPhiGen/hailo-apps-infra/tree/pose_estimation)**
+
+To test pose estimation, follow the Quick Start steps below.
+
 ## Quick Start
 
 Clone the repo and work from its root directory:
@@ -46,19 +56,13 @@ bash setup_ai_env.sh
 ```
 Sets up additional AI environment pieces.
 
-6) Write the default configuration file  
-```
-bash write_configuration.sh
-```
-Generates `configuration.json` with default sensor/camera/activity settings.
-
-7) Full detection test with display (verify broker/S3/detections)  
+6) Full detection test with display (verify broker/S3/detections)  
 ```
 bash run_detection_with_display.sh
 ```
 Make sure the Kafka broker is connected, S3 uploads succeed, and detections look correct **before** proceeding.
 
-8) Optional: install as a service (only after verification above)  
+7) Optional: install as a service (only after verification above)  
 ```
 bash setup_service.sh
 ```
