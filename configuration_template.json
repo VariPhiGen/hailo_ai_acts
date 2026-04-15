@@ -2,38 +2,42 @@
   "sensor_id": "SENSOR_ID_PLACEHOLDER (overridden by SENSOR_ID env variable)",
   "timezone": "Asia/Kolkata",
   "default_arguments": {
-    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/yolov11s.hef",
-    "labels-json": "None"
+    "hef_path": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/model.hef",
+    "labels-json": "/home/arresto/hailo_ai_acts/resources/models/hailo8l/labels.json"
   },
-  "dashboard_connectivity":{
-    "api":0,
-    "kafka":1,
-    "api_confidence_threshold": 0.85,
+  "dashboard_connectivity": {
+    "api": 1,
+    "kafka": 1,
+    "api_confidence_threshold": 0.88,
     "kafka_confidence_min": 0.7,
-    "kafka_confidence_max": 0.85
+    "kafka_confidence_max": 0.88
   },
   "available_activities": [
     "traffic_overspeeding_distancewise",
     "TimeBasedUnauthorizedAccess",
-    "UnsafeZone"
+    "UnsafeZone",
+    "PPE",
+    "WAH",
+    "CameraTampering"
   ],
   "active_activities": [
-    "UnsafeZone"
+    "PPE",
+    "WAH"
   ],
   "radar_config": {
-      "port": "/dev/ttyACMr",
-      "baudrate": 9600,
-      "max_age": 10,
-      "max_diff_rais": 10
-    },
-    "camera_details": {
-      "RTSP_URL": "rtsp://USERNAME:PASSWORD@CAMERA_IP:554/cam/realmonitor?channel=1&subtype=0",
-      "camera_ip": "CAMERA_IP",
-      "username": "admin",
-      "password": "PASSWORD_PLACEHOLDER",
-      "IF_USB_CAMERA": "False",
-      "USB_CAM_INPUT": ""
-    },
+    "port": "/dev/ttyACMr",
+    "baudrate": 9600,
+    "max_age": 10,
+    "max_diff_rais": 10
+  },
+  "camera_details": {
+    "RTSP_URL": "rtsp://USERNAME:PASSWORD@CAMERA_IP:554/cam/realmonitor?channel=1&subtype=0",
+    "camera_ip": "CAMERA_IP",
+    "username": "admin",
+    "password": "PASSWORD_PLACEHOLDER",
+    "IF_USB_CAMERA": "False",
+    "USB_CAM_INPUT": ""
+  },
   "activities_data": {
     "traffic_overspeeding_distancewise": {
       "zones": {
@@ -61,95 +65,159 @@
         }
       }
     },
-    "TimeBasedUnauthorizedAccess":{
-      "zones":{
-          "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
+    "TimeBasedUnauthorizedAccess": {
+      "zones": {
+        "zone1": [
+          [0, 0],
+          [1080, 0],
+          [1080, 720],
+          [0, 720]
+        ]
       },
-      "parameters":{
-          "subcategory_mapping":["person"],
-          "frame_accuracy": 2,
-          "relay":0,
-      "switch_relay":[1,2],
-        "scheduled_time": [{
-          "time_start_end":[["03:00","17:00"],["18:00","18:30"]],
-          "days": ["Monday", "Wednesday", "Friday"]}],
-        "last_check_time":0
-  }
-},
-"UnsafeZone":{
-  "zones":{
-      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
-  },
-  "parameters":{
-      "subcategory_mapping":["person"],
-      "relay":0,
-      "switch_relay":[1,2],
-      "frame_accuracy": 2,
-    "last_check_time":0
-}
-},
-"PPE":{
-  "zones":{
-      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
-  },
-  "parameters":{
-      "subcategory_mapping":{"head":"No Helmet"},
-      "no_zone":1,
-      "switch_relay":[1,2],
-      "frame_accuracy": 2,
-    "last_check_time":0,
-    "relay":0
-}
-},
-"WAH":{
-  "zones":{
-      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
-  },
-  "parameters":{
-      "frame_accuracy": 10,
-      "wah_confidence_threshold": 0.7,
-      "subcategory_mapping":{"harness":"Harness","hooks":"Hooks"},
-      "condition_label":["scaffolding","bricks"],
-      "no_zone":1,
-      "relay":0,
-      "switch_relay":[1,2],
-    "missing_subcategory":"No Harness or Hooks",
-    "last_check_time":0,
-    "yoloe":1,
-    "yoloe_interval":300,
-    "yoloe_confidence":0.1,
-    "yoloe_max_stale_age":60
-}
-},
-"CameraTampering":{
-  "zones":{
-      "zone1":[[0, 0], [1080, 0], [1080, 720], [0, 720]]
-
-  },
-  "parameters":{
-      "frame_accuracy": 2,
-		 "alert_interval": 30,
-      "motion_thres":0.65,
-      "brightness_thres":60,
-      "variance_thres":15,
-      "entropy_thres":1.5,
-      "edge_ratio_thres":0.008,
-      "hash_diff_thres":20,
-      "relay":0,
-      "switch_relay":[1,2],
-    "last_check_time":0
-}
-}
+      "parameters": {
+        "subcategory_mapping": [
+          "person"
+        ],
+        "frame_accuracy": 2,
+        "relay": 0,
+        "switch_relay": [
+          1,
+          2
+        ],
+        "scheduled_time": [
+          {
+            "time_start_end": [
+              [
+                "03:00",
+                "17:00"
+              ],
+              [
+                "18:00",
+                "18:30"
+              ]
+            ],
+            "days": [
+              "Monday",
+              "Wednesday",
+              "Friday"
+            ]
+          }
+        ],
+        "last_check_time": 0
+      }
+    },
+    "UnsafeZone": {
+      "zones": {
+        "zone1": [
+          [0, 0],
+          [1080, 0],
+          [1080, 720],
+          [0, 720]
+        ]
+      },
+      "parameters": {
+        "subcategory_mapping": [
+          "person"
+        ],
+        "relay": 0,
+        "switch_relay": [
+          1,
+          2
+        ],
+        "frame_accuracy": 2,
+        "last_check_time": 0
+      }
+    },
+    "PPE": {
+      "zones": {
+        "zone1": [
+          [0, 0],
+          [1080, 0],
+          [1080, 720],
+          [0, 720]
+        ]
+      },
+      "parameters": {
+        "subcategory_mapping": {
+          "head": "No Helmet",
+          "no-vest": "No Vest"
+        },
+        "switch_relay": [
+          1,
+          2
+        ],
+        "frame_accuracy": 5,
+        "last_check_time": 0,
+        "relay": 0
+      }
+    },
+    "WAH": {
+      "zones": {
+        "zone1": [
+          [0, 0],
+          [1080, 0],
+          [1080, 720],
+          [0, 720]
+        ]
+      },
+      "parameters": {
+        "frame_accuracy": 100,
+        "wah_confidence_threshold": 0.7,
+        "subcategory_mapping": {
+          "harness": "Harness",
+          "hooks": "Hooks"
+        },
+        "condition_label": [
+          "scaffolding"
+        ],
+        "missing_subcategory": "No Harness or Hooks",
+        "no_zone": 1,
+        "relay": 0,
+        "switch_relay": [
+          1,
+          2
+        ],
+        "last_check_time": 0,
+        "yoloe": 1,
+        "yoloe_interval": 60,
+        "yoloe_confidence": 0.1,
+        "yoloe_max_stale_age": 120
+      }
+    },
+    "CameraTampering": {
+      "zones": {
+        "zone1": [
+          [0, 0],
+          [1080, 0],
+          [1080, 720],
+          [0, 720]
+        ]
+      },
+      "parameters": {
+        "frame_accuracy": 2,
+        "alert_interval": 30,
+        "motion_thres": 0.65,
+        "brightness_thres": 60,
+        "variance_thres": 15,
+        "entropy_thres": 1.5,
+        "edge_ratio_thres": 0.008,
+        "hash_diff_thres": 20,
+        "relay": 0,
+        "switch_relay": [
+          1,
+          2
+        ],
+        "last_check_time": 0
+      }
+    }
   },
   "save_settings": {
     "save_snapshots": 0,
     "save_rtsp_images": 0,
     "take_cgi_snapshots": 0,
-    "take_video":0
+    "take_video": 1
   },
-  "calibration_required": 2
+  "calibration_required": 1
 }
+
+

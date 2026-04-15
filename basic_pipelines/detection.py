@@ -154,6 +154,8 @@ class user_app_callback_class(app_callback_class):
         """
         Initialize YOLOE activities and scheduling from configuration.
 
+        Only activities listed in config["active_activities"] are considered.
+
         Expected per activity in config["activities_data"][activity]["parameters"]:
             - "yoloe": 1 or 0
             - "yoloe_interval": int (seconds)
@@ -165,9 +167,12 @@ class user_app_callback_class(app_callback_class):
         self.yoloe_intervals = []
 
         activities_data = config.get("activities_data", {})
+        active_activities = set(config.get("active_activities") or [])
         now_ts = time.time()
 
         for activity_name, details in activities_data.items():
+            if activity_name not in active_activities:
+                continue
             params = details.get("parameters", {})
             if not params.get("yoloe", 0):
                 continue
