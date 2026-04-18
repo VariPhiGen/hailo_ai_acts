@@ -44,6 +44,7 @@ if [[ ! -f "$DETECTION_SCRIPT" ]]; then
     exit 1
 fi
 chmod +x "$DETECTION_SCRIPT"
+chmod +r "$DETECTION_SCRIPT"
 
 # Ensure OTA runner exists
 if [[ ! -f "$OTA_SCRIPT" ]]; then
@@ -51,6 +52,7 @@ if [[ ! -f "$OTA_SCRIPT" ]]; then
     exit 1
 fi
 chmod +x "$OTA_SCRIPT"
+chmod +r "$OTA_SCRIPT"
 
 # --- Create log file ---
 touch "$LOG_FILE"
@@ -83,10 +85,10 @@ Wants=network-online.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$DETECTION_SCRIPT
+# Invoke via bash so the unit still starts if run_detection.sh loses +x (avoids systemd 203/EXEC).
+ExecStart=/bin/bash $DETECTION_SCRIPT
 Restart=always
 RestartSec=30
-RuntimeMaxSec=21600
 StandardOutput=append:$LOG_FILE
 StandardError=append:$LOG_FILE
 
@@ -105,10 +107,9 @@ Wants=network-online.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$OTA_SCRIPT
+ExecStart=/bin/bash $OTA_SCRIPT
 Restart=always
 RestartSec=30
-RuntimeMaxSec=21600
 StandardOutput=append:$OTA_LOG_FILE
 StandardError=append:$OTA_LOG_FILE
 
@@ -127,7 +128,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$REBOOT_SCRIPT
+ExecStart=/bin/bash $REBOOT_SCRIPT
 Restart=always
 RestartSec=60
 StandardOutput=journal
@@ -167,3 +168,6 @@ echo "  - Service: $SERVICE_NAME (logs in $LOG_FILE)"
 echo "  - Service: $OTA_SERVICE_NAME (logs in $OTA_LOG_FILE)"
 echo "  - Service: $REBOOT_SERVICE_NAME (auto reboot every 24h)"
 echo "  - Logrotate rule: $LOGROTATE_CONF"
+echo ""
+echo "  ExecStart uses /bin/bash so startup does not depend on +x on shell scripts."
+echo "  RuntimeMaxSec was removed (old value 21600s forced a restart every 6 hours)."
